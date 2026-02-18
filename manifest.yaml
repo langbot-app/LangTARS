@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Plugin
+metadata:
+  author: User
+  name: langtars
+  repository: ''
+  version: 0.1.0
+  description:
+    en_US: 'Control your Mac through IM messages - run shell commands, manage processes, files, and applications (like OpenClaw)'
+    zh_Hans: '通过 IM 消息控制您的 Mac - 运行 shell 命令、管理进程、文件和应用程序（类 OpenClaw）'
+  label:
+    en_US: LangTARS
+    zh_Hans: LangTARS
+  icon: assets/icon.svg
+spec:
+  config:
+    - name: allowed_users
+      type: array[string]
+      required: false
+      label:
+        en_US: Allowed Users
+        zh_Hans: 允许的用户
+      description:
+        en_US: 'List of user IDs allowed to control this Mac'
+        zh_Hans: '允许控制此 Mac 的用户 ID 列表'
+      default: []
+    - name: command_whitelist
+      type: array[string]
+      required: false
+      label:
+        en_US: Command Whitelist
+        zh_Hans: 命令白名单
+      description:
+        en_US: 'Allowed shell commands (empty = all commands allowed with restrictions)'
+        zh_Hans: '允许的 shell 命令（留空 = 在限制下允许所有命令）'
+      default: []
+    - name: workspace_path
+      type: string
+      required: false
+      label:
+        en_US: Workspace Path
+        zh_Hans: 工作区路径
+      description:
+        en_US: 'Workspace directory for file operations (default: ~/.langtars)'
+        zh_Hans: '文件操作的工作区目录（默认：~/.langtars）'
+      default: ~/.langtars
+    - name: enable_shell
+      type: boolean
+      required: false
+      label:
+        en_US: Enable Shell
+        zh_Hans: 启用 Shell
+      description:
+        en_US: 'Enable shell command execution'
+        zh_Hans: '启用 shell 命令执行'
+      default: true
+    - name: enable_process
+      type: boolean
+      required: false
+      label:
+        en_US: Enable Process Management
+        zh_Hans: 启用进程管理
+      description:
+        en_US: 'Enable process listing and killing'
+        zh_Hans: '启用进程列表和终止'
+      default: true
+    - name: enable_file
+      type: boolean
+      required: false
+      label:
+        en_US: Enable File Operations
+        zh_Hans: 启用文件操作
+      description:
+        en_US: 'Enable file read/write operations'
+        zh_Hans: '启用文件读写操作'
+      default: true
+    - name: enable_app
+      type: boolean
+      required: false
+      label:
+        en_US: Enable App Control
+        zh_Hans: 启用应用控制
+      description:
+        en_US: 'Enable application open/close operations'
+        zh_Hans: '启用应用程序打开/关闭操作'
+      default: true
+  components:
+    Command:
+      fromDirs:
+      - path: components/commands/
+    Tool:
+      fromDirs:
+      - path: components/tools/
+execution:
+  python:
+    path: main.py
+    attr: LangTARSPlugin
