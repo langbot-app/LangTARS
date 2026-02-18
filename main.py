@@ -7,14 +7,15 @@ import asyncio
 import json
 import os
 import platform
-import shutil
 from pathlib import Path
 from typing import Any
 
-from langbot_plugin.api.definition.plugin import BasePlugin
+from langbot_plugin.api.definition.components.command.command import Command, Subcommand
+from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
+from langbot_plugin.api.entities.builtin.command.context import CommandReturn
 
 
-class LangTARSPlugin(BasePlugin):
+class LangTARS(Command):
     """LangTARS Plugin - Control your Mac through IM messages (like OpenClaw)"""
 
     # Safety constants
@@ -29,15 +30,6 @@ class LangTARSPlugin(BasePlugin):
         r'&\s*>/dev/',
     ]
 
-    # Default command whitelist (safe commands)
-    DEFAULT_WHITELIST = [
-        'ls', 'pwd', 'echo', 'cat', 'head', 'tail', 'grep', 'find',
-        'ps', 'top', 'whoami', 'date', 'time', 'hostname', 'uname',
-        'mkdir', 'touch', 'cp', 'mv', 'rm',  # rm is allowed but restricted
-        'which', 'type', 'file', 'wc', 'sort', 'uniq', 'cut',
-        'tr', 'sed', 'awk', 'printf', 'clear',
-    ]
-
     def __init__(self):
         super().__init__()
         self.config: dict[str, Any] = {}
@@ -46,45 +38,102 @@ class LangTARSPlugin(BasePlugin):
         self._command_whitelist: list[str] = []
         self._initialized = False
 
+        # Register subcommands
+        self.registered_subcommands = {
+            "info": Subcommand(
+                subcommand=self.cmd_info,
+                help="Get system information",
+                usage="/tars info",
+                aliases=["system", "sysinfo"],
+            ),
+            "shell": Subcommand(
+                subcommand=self.cmd_shell,
+                help="Execute shell command",
+                usage="/tars shell <command>",
+                aliases=["sh", "exec"],
+            ),
+            "ps": Subcommand(
+                subcommand=self.cmd_ps,
+                help="List running processes",
+                usage="/tars ps [filter]",
+                aliases=["processes", "process"],
+            ),
+            "ls": Subcommand(
+                subcommand=self.cmd_ls,
+                help="List directory contents",
+                usage="/tars ls [path]",
+                aliases=["dir", "list"],
+            ),
+            "cat": Subcommand(
+                subcommand=self.cmd_cat,
+                help="Read file content",
+                usage="/tars cat <path>",
+                aliases=["read", "view"],
+            ),
+            "kill": Subcommand(
+                subcommand=self.cmd_kill,
+                help="Kill a process",
+                usage="/tars kill <pid|name>",
+                aliases=["stop"],
+            ),
+            "open": Subcommand(
+                subcommand=self.cmd_open,
+                help="Open an application or URL",
+                usage="/tars open <app_name|url>",
+                aliases=["launch"],
+            ),
+            "close": Subcommand(
+                subcommand=self.cmd_close,
+                help="Close an application",
+                usage="/tars close <app_name>",
+                aliases=["quit"],
+            ),
+            "apps": Subcommand(
+                subcommand=self.cmd_apps,
+                help="List running applications",
+                usage="/tars apps [limit]",
+                aliases=["listapps"],
+            ),
+            "help": Subcommand(
+                subcommand=self.cmd_help,
+                help="Show help",
+                usage="/tars help",
+                aliases=["?"],
+            ),
+            "*": Subcommand(
+                subcommand=self.cmd_natural,
+                help="Handle natural language commands",
+                usage="Natural language input",
+                aliases=[],
+            ),
+        }
+
     def get_config(self) -> dict[str, Any]:
         """Get the config of the plugin."""
         return self.config
 
     async def initialize(self) -> None:
         """Initialize the plugin."""
-        # Load configuration
         self.config = self.config or {}
-
-        # Get workspace path
         workspace = self.config.get('workspace_path', '~/.langtars')
         self._workspace_path = Path(workspace).expanduser()
         self._workspace_path.mkdir(parents=True, exist_ok=True)
-
-        # Get allowed users
         self._allowed_users = set(self.config.get('allowed_users', []))
-
-        # Get command whitelist
         self._command_whitelist = self.config.get('command_whitelist', [])
-
         self._initialized = True
-
-    def __del__(self) -> None:
-        """Cleanup on plugin termination."""
-        pass
 
     # ========== Safety Methods ==========
 
     def is_user_allowed(self, user_id: str) -> bool:
         """Check if a user is allowed to control this Mac."""
         if not self._allowed_users:
-            return True  # No restrictions if no users configured
+            return True
         return user_id in self._allowed_users
 
     def is_command_allowed(self, command: str) -> bool:
         """Check if a shell command is allowed."""
         if not self._command_whitelist:
-            return True  # No whitelist means all commands allowed (with dangerous pattern check)
-        # Check if command starts with any whitelisted command
+            return True
         cmd_base = command.strip().split()[0] if command.strip() else ''
         return cmd_base in self._command_whitelist
 
@@ -105,7 +154,6 @@ class LangTARSPlugin(BasePlugin):
         working_dir: str | None = None,
     ) -> dict[str, Any]:
         """Execute a shell command safely."""
-        # Safety checks
         if not self.config.get('enable_shell', True):
             return {
                 'success': False,
@@ -115,7 +163,6 @@ class LangTARSPlugin(BasePlugin):
                 'returncode': -1,
             }
 
-        # Check if command is allowed
         if not self.is_command_allowed(command):
             return {
                 'success': False,
@@ -125,7 +172,6 @@ class LangTARSPlugin(BasePlugin):
                 'returncode': -1,
             }
 
-        # Check for dangerous patterns
         is_dangerous, danger_msg = self.check_dangerous_pattern(command)
         if is_dangerous:
             return {
@@ -136,21 +182,18 @@ class LangTARSPlugin(BasePlugin):
                 'returncode': -1,
             }
 
-        # Restrict working directory
         if working_dir:
             working_path = Path(working_dir).expanduser()
             try:
                 working_path = working_path.resolve()
                 workspace_path = self._workspace_path.resolve()
-                # Allow subdirectories of workspace
                 if not str(working_path).startswith(str(workspace_path)):
-                    working_path = workspace_path
+                    working_path = self._workspace_path
             except Exception:
                 working_path = self._workspace_path
         else:
             working_path = self._workspace_path
 
-        # Execute command
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
@@ -191,31 +234,67 @@ class LangTARSPlugin(BasePlugin):
                 'returncode': -1,
             }
 
-    # ========== Process Management ==========
+    # ========== Subcommand Implementations ==========
 
-    async def list_processes(
-        self,
-        filter_pattern: str | None = None,
-        limit: int = 20,
-    ) -> dict[str, Any]:
-        """List running processes."""
-        if not self.config.get('enable_process', True):
-            return {
-                'success': False,
-                'error': 'Process management is disabled',
-                'processes': [],
+    async def cmd_info(self, context: ExecuteContext) -> CommandReturn:
+        """Get system information."""
+        try:
+            info = {
+                'platform': platform.system(),
+                'platform_version': platform.version(),
+                'architecture': platform.architecture(),
+                'processor': platform.processor(),
+                'hostname': platform.node(),
+                'python_version': platform.python_version(),
             }
 
-        # Get process list using ps
+            uptime_result = await self.run_shell('uptime')
+            if uptime_result['success']:
+                info['uptime'] = uptime_result['stdout'].strip()
+
+            return CommandReturn(text=json.dumps(info, indent=2, ensure_ascii=False))
+        except Exception as e:
+            return CommandReturn(text=f"Error: {str(e)}")
+
+    async def cmd_shell(self, context: ExecuteContext) -> CommandReturn:
+        """Execute a shell command."""
+        command = " ".join(context.crt_params)
+        if not command:
+            return CommandReturn(text="Please provide a command")
+
+        result = await self.run_shell(command)
+        output = []
+        if result['stdout']:
+            output.append(result['stdout'])
+        if result['stderr']:
+            output.append(f"stderr: {result['stderr']}")
+        if result.get('error'):
+            output.append(f"Error: {result['error']}")
+
+        text = "\n".join(output) if output else f"Return code: {result.get('returncode')}"
+        return CommandReturn(text=text)
+
+    async def cmd_ps(self, context: ExecuteContext) -> CommandReturn:
+        """List running processes."""
+        if not self.config.get('enable_process', True):
+            return CommandReturn(text="Process management is disabled")
+
+        filter_pattern = context.crt_params[0] if len(context.crt_params) > 0 else None
+        limit = 20
+        if len(context.crt_params) > 1:
+            try:
+                limit = int(context.crt_params[1])
+            except ValueError:
+                pass
+
         if filter_pattern:
             command = f'ps aux | grep -E "{filter_pattern}" | grep -v grep | head -n {limit}'
         else:
             command = f'ps aux | head -n {limit + 1}'
 
         result = await self.run_shell(command)
-
         if not result['success']:
-            return result
+            return CommandReturn(text=f"Error: {result.get('error', 'Unknown error')}")
 
         processes = []
         for line in result['stdout'].strip().split('\n'):
@@ -231,398 +310,178 @@ class LangTARSPlugin(BasePlugin):
                     'command': parts[10] if len(parts) > 10 else parts[-1],
                 })
 
-        return {
-            'success': True,
-            'processes': processes,
-            'count': len(processes),
-        }
+        output = [f"{p['pid']:>6} {p['user']:>10} {p['cpu']:>5} {p['mem']:>5} {p['command']}" for p in processes[:limit]]
+        return CommandReturn(text="PID      USER         CPU    MEM COMMAND\n" + "\n".join(output))
 
-    async def kill_process(
-        self,
-        target: str,
-        signal: str = 'TERM',
-        force: bool = False,
-    ) -> dict[str, Any]:
-        """Kill a process by PID or name."""
-        if not self.config.get('enable_process', True):
-            return {
-                'success': False,
-                'error': 'Process management is disabled',
-            }
-
-        # Determine if target is PID or name
-        is_pid = target.isdigit()
-
-        # Build kill command
-        if is_pid:
-            kill_signal = 'KILL' if force else signal
-            command = f'kill -{kill_signal} {target}'
-        else:
-            # Kill by name - find PIDs first
-            find_cmd = f'pgrep -f "{target}"'
-            if force:
-                command = f'pkill -9 "{target}"'
-            else:
-                command = f'pkill -TERM "{target}"'
-
-        result = await self.run_shell(command)
-
-        if result['success']:
-            return {
-                'success': True,
-                'message': f'Process {"PID " + target if is_pid else target} terminated',
-            }
-        else:
-            return {
-                'success': False,
-                'error': result.get('stderr', 'Process not found'),
-            }
-
-    # ========== File Operations ==========
-
-    async def read_file(self, path: str) -> dict[str, Any]:
-        """Read file content."""
-        if not self.config.get('enable_file', True):
-            return {
-                'success': False,
-                'error': 'File operations are disabled',
-                'content': '',
-            }
-
-        # Resolve path within workspace
-        file_path = self._resolve_path(path)
-        if not file_path:
-            return {
-                'success': False,
-                'error': 'Access denied: path outside workspace',
-                'content': '',
-            }
-
-        try:
-            content = file_path.read_text(encoding='utf-8')
-            return {
-                'success': True,
-                'path': str(file_path),
-                'content': content,
-                'size': len(content),
-            }
-        except UnicodeDecodeError:
-            # Try binary read
-            try:
-                content = file_path.read_bytes()
-                return {
-                    'success': True,
-                    'path': str(file_path),
-                    'content': f'[Binary file, {len(content)} bytes]',
-                    'size': len(content),
-                    'is_binary': True,
-                }
-            except Exception as e:
-                return {
-                    'success': False,
-                    'error': str(e),
-                    'content': '',
-                }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'content': '',
-            }
-
-    async def write_file(
-        self,
-        path: str,
-        content: str,
-        mode: str = 'w',
-    ) -> dict[str, Any]:
-        """Write content to a file."""
-        if not self.config.get('enable_file', True):
-            return {
-                'success': False,
-                'error': 'File operations are disabled',
-            }
-
-        # Resolve path within workspace
-        file_path = self._resolve_path(path)
-        if not file_path:
-            return {
-                'success': False,
-                'error': 'Access denied: path outside workspace',
-            }
-
-        try:
-            # Create parent directories if needed
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-
-            if mode == 'a':
-                file_path.append_text(content, encoding='utf-8')
-            else:
-                file_path.write_text(content, encoding='utf-8')
-
-            return {
-                'success': True,
-                'path': str(file_path),
-                'message': 'File written successfully',
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-            }
-
-    async def list_directory(
-        self,
-        path: str = '.',
-        show_hidden: bool = False,
-    ) -> dict[str, Any]:
+    async def cmd_ls(self, context: ExecuteContext) -> CommandReturn:
         """List directory contents."""
         if not self.config.get('enable_file', True):
-            return {
-                'success': False,
-                'error': 'File operations are disabled',
-                'items': [],
-            }
+            return CommandReturn(text="File operations are disabled")
 
-        # Resolve path within workspace
+        path = context.crt_params[0] if len(context.crt_params) > 0 else '.'
         dir_path = self._resolve_path(path)
         if not dir_path:
-            return {
-                'success': False,
-                'error': 'Access denied: path outside workspace',
-                'items': [],
-            }
+            return CommandReturn(text=f"Access denied: path outside workspace")
 
         try:
             items = []
             for item in dir_path.iterdir():
-                if not show_hidden and item.name.startswith('.'):
+                if item.name.startswith('.'):
                     continue
-                items.append({
-                    'name': item.name,
-                    'type': 'directory' if item.is_dir() else 'file',
-                    'size': item.stat().st_size if item.is_file() else 0,
-                })
-
-            return {
-                'success': True,
-                'path': str(dir_path),
-                'items': sorted(items, key=lambda x: (x['type'], x['name'])),
-                'count': len(items),
-            }
+                items.append(f"{'[DIR] ' if item.is_dir() else '[FILE]'} {item.name}")
+            if not items:
+                items = ["(empty)"]
+            return CommandReturn(text="\n".join(sorted(items)))
         except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'items': [],
-            }
+            return CommandReturn(text=f"Error: {str(e)}")
 
-    async def search_files(
-        self,
-        pattern: str,
-        path: str = '.',
-        recursive: bool = True,
-    ) -> dict[str, Any]:
-        """Search for files matching a pattern."""
+    async def cmd_cat(self, context: ExecuteContext) -> CommandReturn:
+        """Read file content."""
         if not self.config.get('enable_file', True):
-            return {
-                'success': False,
-                'error': 'File operations are disabled',
-                'files': [],
-            }
+            return CommandReturn(text="File operations are disabled")
 
-        # Resolve path within workspace
-        search_path = self._resolve_path(path)
-        if not search_path:
-            return {
-                'success': False,
-                'error': 'Access denied: path outside workspace',
-                'files': [],
-            }
+        if len(context.crt_params) < 1:
+            return CommandReturn(text="Please provide a file path")
+
+        path = context.crt_params[0]
+        file_path = self._resolve_path(path)
+        if not file_path:
+            return CommandReturn(text="Access denied: path outside workspace")
 
         try:
-            files = []
-            if recursive:
-                for item in search_path.rglob(pattern):
-                    if item.is_file():
-                        files.append(str(item))
-            else:
-                for item in search_path.glob(pattern):
-                    if item.is_file():
-                        files.append(str(item))
-
-            return {
-                'success': True,
-                'path': str(search_path),
-                'pattern': pattern,
-                'files': files[:50],  # Limit results
-                'count': len(files),
-            }
+            content = file_path.read_text(encoding='utf-8')
+            return CommandReturn(text=content)
+        except UnicodeDecodeError:
+            return CommandReturn(text=f"[Binary file, {file_path.stat().st_size} bytes]")
         except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'files': [],
-            }
+            return CommandReturn(text=f"Error: {str(e)}")
 
-    # ========== Application Control ==========
+    async def cmd_kill(self, context: ExecuteContext) -> CommandReturn:
+        """Kill a process."""
+        if not self.config.get('enable_process', True):
+            return CommandReturn(text="Process management is disabled")
 
-    async def open_app(
-        self,
-        app_name: str,
-        url: str | None = None,
-    ) -> dict[str, Any]:
+        if len(context.crt_params) < 1:
+            return CommandReturn(text="Please provide a PID or process name")
+
+        target = context.crt_params[0]
+        is_pid = target.isdigit()
+
+        if is_pid:
+            command = f'kill -{("KILL" if "-9" in context.crt_params else "TERM")} {target}'
+        else:
+            command = f'pkill -TERM "{target}"'
+
+        result = await self.run_shell(command)
+        if result['success']:
+            return CommandReturn(text=f"Process terminated: {target}")
+        else:
+            return CommandReturn(text=f"Failed to terminate: {result.get('stderr', 'Unknown error')}")
+
+    async def cmd_open(self, context: ExecuteContext) -> CommandReturn:
         """Open an application or URL."""
         if not self.config.get('enable_app', True):
-            return {
-                'success': False,
-                'error': 'App control is disabled',
-            }
+            return CommandReturn(text="App control is disabled")
 
-        try:
-            if url:
-                command = f'open "{url}"'
-            else:
-                command = f'open -a "{app_name}"'
+        if len(context.crt_params) < 1:
+            return CommandReturn(text="Please provide an app name or URL")
 
-            result = await self.run_shell(command)
+        target = context.crt_params[0]
+        if target.startswith('http'):
+            command = f'open "{target}"'
+        else:
+            command = f'open -a "{target}"'
 
-            if result['success']:
-                return {
-                    'success': True,
-                    'message': f'{"URL" if url else "Application"} opened: {app_name or url}',
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': result.get('stderr', f'Failed to open {app_name}'),
-                }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-            }
+        result = await self.run_shell(command)
+        if result['success']:
+            return CommandReturn(text=f"Opened: {target}")
+        else:
+            return CommandReturn(text=f"Failed to open: {result.get('stderr', 'Unknown error')}")
 
-    async def close_app(self, app_name: str, force: bool = False) -> dict[str, Any]:
+    async def cmd_close(self, context: ExecuteContext) -> CommandReturn:
         """Close an application."""
         if not self.config.get('enable_app', True):
-            return {
-                'success': False,
-                'error': 'App control is disabled',
-            }
+            return CommandReturn(text="App control is disabled")
 
-        try:
-            signal = '9' if force else 'TERM'
-            command = f'pkill -{signal} "{app_name}"'
+        if len(context.crt_params) < 1:
+            return CommandReturn(text="Please provide an app name")
 
-            result = await self.run_shell(command)
+        app_name = context.crt_params[0]
+        signal = '9' if '-9' in context.crt_params else 'TERM'
+        command = f'pkill -{signal} "{app_name}"'
 
-            if result['success']:
-                return {
-                    'success': True,
-                    'message': f'Application closed: {app_name}',
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': result.get('stderr', f'Failed to close {app_name}'),
-                }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-            }
+        result = await self.run_shell(command)
+        if result['success']:
+            return CommandReturn(text=f"Closed: {app_name}")
+        else:
+            return CommandReturn(text=f"Failed to close: {result.get('stderr', 'Unknown error')}")
 
-    async def get_frontmost_app(self) -> dict[str, Any]:
-        """Get the currently active application."""
-        if not self.config.get('enable_app', True):
-            return {
-                'success': False,
-                'error': 'App control is disabled',
-            }
-
-        try:
-            command = '''osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null || echo "Unknown"'''
-            result = await self.run_shell(command)
-
-            if result['success']:
-                app_name = result['stdout'].strip()
-                return {
-                    'success': True,
-                    'app_name': app_name or 'Unknown',
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': 'Failed to get frontmost app',
-                }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-            }
-
-    async def list_apps(self, limit: int = 20) -> dict[str, Any]:
+    async def cmd_apps(self, context: ExecuteContext) -> CommandReturn:
         """List running applications."""
         if not self.config.get('enable_app', True):
-            return {
-                'success': False,
-                'error': 'App control is disabled',
-                'apps': [],
-            }
+            return CommandReturn(text="App control is disabled")
+
+        limit = int(context.crt_params[0]) if len(context.crt_params) > 0 else 20
 
         try:
-            command = f'''osascript -e 'tell application "System Events" to get name of every process' 2>/dev/null | tr ',' '\\n' | head -n {limit}'''
+            command = f'''osascript -e 'tell application "System Events" to get name of every process' 2>/dev/null | tr ',' '\n' | head -n {limit}'''
             result = await self.run_shell(command)
 
             if result['success']:
                 apps = [a.strip() for a in result['stdout'].strip().split('\n') if a.strip()]
-                return {
-                    'success': True,
-                    'apps': apps,
-                    'count': len(apps),
-                }
+                return CommandReturn(text="\n".join(apps))
             else:
-                return {
-                    'success': False,
-                    'error': 'Failed to list applications',
-                    'apps': [],
-                }
+                return CommandReturn(text="Failed to list applications")
         except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'apps': [],
-            }
+            return CommandReturn(text=f"Error: {str(e)}")
 
-    # ========== System Info ==========
+    async def cmd_help(self, context: ExecuteContext) -> CommandReturn:
+        """Show help."""
+        help_text = """LangTARS - Control your Mac through IM messages
 
-    async def get_system_info(self) -> dict[str, Any]:
-        """Get basic system information."""
-        try:
-            info = {
-                'platform': platform.system(),
-                'platform_version': platform.version(),
-                'architecture': platform.architecture(),
-                'processor': platform.processor(),
-                'hostname': platform.node(),
-                'python_version': platform.python_version(),
-            }
+Available commands:
+  /tars info              - Get system information
+  /tars shell <command>   - Execute shell command
+  /tars ps [filter]       - List running processes
+  /tars ls [path]        - List directory contents
+  /tars cat <path>       - Read file content
+  /tars kill <pid|name>  - Kill a process
+  /tars open <app|url>   - Open an application or URL
+  /tars close <app>      - Close an application
+  /tars apps [limit]     - List running applications
+  /tars help             - Show this help
 
-            # Get uptime
-            uptime_result = await self.run_shell('uptime')
-            if uptime_result['success']:
-                info['uptime'] = uptime_result['stdout'].strip()
+Examples:
+  /tars info
+  /tars shell ls -la
+  /tars ps python
+  /tars open Safari
+"""
+        return CommandReturn(text=help_text)
 
-            return {
-                'success': True,
-                'info': info,
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-            }
+    async def cmd_natural(self, context: ExecuteContext) -> CommandReturn:
+        """Handle natural language commands via LLM."""
+        query = " ".join(context.crt_params) if context.crt_params else context.full_command_text
+        query_lower = query.lower()
+
+        if any(kw in query_lower for kw in ['system', 'info', 'os', 'version']):
+            return await self.cmd_info(context)
+        elif any(kw in query_lower for kw in ['process', 'ps', 'running', 'task']):
+            return await self.cmd_ps(context)
+        elif any(kw in query_lower for kw in ['directory', 'folder', 'list', 'ls', 'dir']):
+            return await self.cmd_ls(context)
+        elif any(kw in query_lower for kw in ['file', 'read', 'cat', 'view', 'content']):
+            return await self.cmd_cat(context)
+        elif any(kw in query_lower for kw in ['open', 'launch', 'start']):
+            return await self.cmd_open(context)
+        elif any(kw in query_lower for kw in ['close', 'quit', 'stop', 'kill']):
+            return await self.cmd_kill(context) if any(kw in query_lower for kw in ['kill', 'process']) else await self.cmd_close(context)
+        elif any(kw in query_lower for kw in ['app', 'application', 'software']):
+            return await self.cmd_apps(context)
+        elif any(kw in query_lower for kw in ['shell', 'command', 'exec', 'run']):
+            return await self.cmd_shell(context)
+        else:
+            return CommandReturn(text=f"I'm not sure what you mean by: {query}\nTry /tars help for available commands.")
 
     # ========== Helper Methods ==========
 
@@ -633,18 +492,13 @@ class LangTARSPlugin(BasePlugin):
 
         try:
             requested = Path(path).expanduser()
-
-            # If it's an absolute path, check if it's within workspace
             if requested.is_absolute():
                 resolved = requested.resolve()
                 workspace = self._workspace_path.resolve()
-
-                # Allow absolute paths that are within workspace
                 if not str(resolved).startswith(str(workspace)):
                     return None
                 return resolved
             else:
-                # Relative path - make relative to workspace
                 return (self._workspace_path / requested).resolve()
         except Exception:
             return None
