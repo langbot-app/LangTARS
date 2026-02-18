@@ -21,8 +21,9 @@ class ProcessTool(Tool):
         query_id: int,
     ) -> str:
         """Manage processes on this Mac."""
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
 
         action = params.get('action', 'list')
 

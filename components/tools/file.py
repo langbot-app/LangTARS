@@ -21,8 +21,9 @@ class FileTool(Tool):
         query_id: int,
     ) -> str:
         """Perform file operations on this Mac."""
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
 
         action = params.get('action', 'read')
 

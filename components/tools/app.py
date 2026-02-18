@@ -21,8 +21,9 @@ class AppTool(Tool):
         query_id: int,
     ) -> str:
         """Control applications on this Mac."""
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
 
         action = params.get('action', 'open')
 

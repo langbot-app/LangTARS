@@ -26,8 +26,9 @@ class ShellTool(Tool):
         working_dir = params.get('working_dir')
 
         # Import main module to use plugin methods
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
 
         result = await plugin.run_shell(command, timeout, working_dir)
 

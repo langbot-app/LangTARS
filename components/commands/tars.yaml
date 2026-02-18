@@ -11,7 +11,8 @@ metadata:
     en_US: 'Control your Mac - run shell commands, manage processes, files, and applications (like OpenClaw)'
     zh_Hans: '控制您的 Mac - 运行 shell 命令、管理进程、文件和应用程序（类 OpenClaw）'
 spec:
-  execution:
-    python:
-      path: langtars.py
-      attr: LangTARS
+  parameters: {}
+execution:
+  python:
+    path: langtars.py
+    attr: LangTARS

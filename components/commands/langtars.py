@@ -17,88 +17,101 @@ class LangTARS(Command):
     async def initialize(self):
         await super().initialize()
 
-        # Register subcommands
+        # Register subcommands with class methods (unbound)
         self.registered_subcommands["shell"] = Subcommand(
-            subcommand=self.shell_handler,
+            subcommand=LanTARSCommand.shell,
             help="Execute a shell command",
             usage="/tars shell <command>",
             aliases=["sh", "exec"],
         )
 
         self.registered_subcommands["ps"] = Subcommand(
-            subcommand=self.ps_handler,
+            subcommand=LanTARSCommand.ps,
             help="List running processes",
             usage="/tars ps [filter] [limit]",
             aliases=["processes", "process"],
         )
 
         self.registered_subcommands["kill"] = Subcommand(
-            subcommand=self.kill_handler,
+            subcommand=LanTARSCommand.kill,
             help="Kill a process by name or PID",
             usage="/tars kill <name|PID> [-f]",
             aliases=[],
         )
 
         self.registered_subcommands["ls"] = Subcommand(
-            subcommand=self.ls_handler,
+            subcommand=LanTARSCommand.ls,
             help="List directory contents",
             usage="/tars ls [path] [-a]",
             aliases=["list", "dir"],
         )
 
         self.registered_subcommands["cat"] = Subcommand(
-            subcommand=self.cat_handler,
+            subcommand=LanTARSCommand.cat,
             help="Read file content",
             usage="/tars cat <path>",
             aliases=["read", "view"],
         )
 
         self.registered_subcommands["write"] = Subcommand(
-            subcommand=self.write_handler,
+            subcommand=LanTARSCommand.write,
             help="Write content to a file",
             usage="/tars write <path> <content>",
             aliases=["save", "create"],
         )
 
         self.registered_subcommands["open"] = Subcommand(
-            subcommand=self.open_handler,
+            subcommand=LanTARSCommand.open,
             help="Open an application or URL",
             usage="/tars open <app|url>",
             aliases=["launch", "start"],
         )
 
         self.registered_subcommands["close"] = Subcommand(
-            subcommand=self.close_handler,
+            subcommand=LanTARSCommand.close,
             help="Close an application",
             usage="/tars close <app_name> [-f]",
             aliases=["quit", "stop"],
         )
 
         self.registered_subcommands["top"] = Subcommand(
-            subcommand=self.top_handler,
+            subcommand=LanTARSCommand.top,
             help="Show running applications",
             usage="/tars top",
             aliases=["apps"],
         )
 
         self.registered_subcommands["info"] = Subcommand(
-            subcommand=self.info_handler,
+            subcommand=LanTARSCommand.info,
             help="Show system information",
             usage="/tars info",
             aliases=["system", "status"],
         )
 
         self.registered_subcommands["search"] = Subcommand(
-            subcommand=self.search_handler,
+            subcommand=LanTARSCommand.search,
             help="Search for files",
             usage="/tars search <pattern> [path]",
             aliases=["find"],
         )
 
-    async def shell_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        # Wildcard subcommand to handle no subcommand
+        self.registered_subcommands["*"] = Subcommand(
+            subcommand=LanTARSCommand.default,
+            help="Show help or handle default",
+            usage="/tars help",
+            aliases=[],
+        )
+
+
+# Separate class for command handlers to avoid self binding issues
+class LanTARSCommand:
+    """Static command handlers that delegate to main plugin."""
+
+    @staticmethod
+    async def shell(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle shell command execution."""
         params = context.crt_params
-
         if not params:
             yield CommandReturn(text="Usage: /tars shell <command>")
             return
@@ -106,37 +119,27 @@ class LangTARS(Command):
         command = ' '.join(params)
         yield CommandReturn(text=f"Executing: `{command}`\n\n")
 
-        # Import and call the plugin method
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.run_shell(command)
 
         if result['success']:
             output = result.get('stdout', '') or result.get('stderr', '')
-            yield CommandReturn(text=f"✓ Command executed successfully\n\n```\n{output}\n```")
+            yield CommandReturn(text=f"Command executed successfully\n\n```\n{output}\n```")
         else:
-            yield CommandReturn(text=f"✗ Command failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Command failed: {result.get('error', 'Unknown error')}")
 
-    async def ps_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def ps(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle process listing."""
         params = context.crt_params
-
-        filter_pattern = None
+        filter_pattern = params[0] if params else None
         limit = 20
 
-        for i, param in enumerate(params):
-            if param.startswith('-'):
-                continue
-            if i == 0:
-                filter_pattern = param
-            elif i == 1:
-                try:
-                    limit = int(param)
-                except ValueError:
-                    pass
-
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.list_processes(filter_pattern, limit)
 
         if result['success']:
@@ -145,7 +148,6 @@ class LangTARS(Command):
                 yield CommandReturn(text="No processes found.")
                 return
 
-            # Format as table
             lines = ["**Processes:**\n"]
             lines.append(f"{'PID':<8} {'CPU%':<8} {'MEM%':<8} {'COMMAND'}")
             lines.append("-" * 60)
@@ -158,42 +160,39 @@ class LangTARS(Command):
 
             yield CommandReturn(text='\n'.join(lines))
         else:
-            yield CommandReturn(text=f"Failed to list processes: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
-    async def kill_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def kill(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle process killing."""
         params = context.crt_params
-
         if not params:
             yield CommandReturn(text="Usage: /tars kill <name|PID> [-f]")
             return
 
         target = params[0]
-        force = '-f' in params or '--force' in params
+        force = '-f' in params
 
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.kill_process(target, force=force)
 
         if result['success']:
-            yield CommandReturn(text=f"✓ {result.get('message', 'Process terminated')}")
+            yield CommandReturn(text=f"Process terminated: {target}")
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
-    async def ls_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def ls(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle directory listing."""
         params = context.crt_params
+        path = params[0] if params else '.'
+        show_hidden = '-a' in params
 
-        path = '.'
-        show_hidden = '-a' in params or '--all' in params
-
-        for param in params:
-            if not param.startswith('-'):
-                path = param
-                break
-
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.list_directory(path, show_hidden)
 
         if result['success']:
@@ -211,37 +210,38 @@ class LangTARS(Command):
             lines.append(f"\nTotal: {result.get('count', 0)} items")
             yield CommandReturn(text='\n'.join(lines))
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Access denied')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Access denied')}")
 
-    async def cat_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def cat(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle file reading."""
         params = context.crt_params
-
         if not params:
             yield CommandReturn(text="Usage: /tars cat <path>")
             return
 
         path = params[0]
 
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.read_file(path)
 
         if result['success']:
             content = result.get('content', '')
             if result.get('is_binary'):
-                yield CommandReturn(text=f"✓ Binary file: {result.get('path', path)} ({result.get('size', 0)} bytes)")
+                yield CommandReturn(text=f"Binary file: {result.get('path', path)} ({result.get('size', 0)} bytes)")
             elif len(content) > 2000:
-                yield CommandReturn(text=f"```\n{content[:2000]}\n```\n\n... (truncated, {len(content)} total bytes)")
+                yield CommandReturn(text=f"```\n{content[:2000]}\n```\n\n... (truncated)")
             else:
                 yield CommandReturn(text=f"```\n{content}\n```")
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Access denied')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Access denied')}")
 
-    async def write_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def write(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle file writing."""
         params = context.crt_params
-
         if len(params) < 2:
             yield CommandReturn(text="Usage: /tars write <path> <content>")
             return
@@ -249,61 +249,64 @@ class LangTARS(Command):
         path = params[0]
         content = ' '.join(params[1:])
 
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.write_file(path, content)
 
         if result['success']:
-            yield CommandReturn(text=f"✓ File written: {result.get('path', path)}")
+            yield CommandReturn(text=f"File written: {result.get('path', path)}")
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
-    async def open_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def open(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app/URL opening."""
         params = context.crt_params
-
         if not params:
             yield CommandReturn(text="Usage: /tars open <app_name|url>")
             return
 
         target = params[0]
-
-        # Check if it's a URL
         is_url = target.startswith(('http://', 'https://', 'mailto:', 'tel:'))
 
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.open_app(target if not is_url else None, url=target if is_url else None)
 
         if result['success']:
-            yield CommandReturn(text=f"✓ {result.get('message')}")
+            yield CommandReturn(text=f"Opened: {target}")
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
-    async def close_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def close(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app closing."""
         params = context.crt_params
-
         if not params:
             yield CommandReturn(text="Usage: /tars close <app_name> [-f]")
             return
 
         app_name = params[0]
-        force = '-f' in params or '--force' in params
+        force = '-f' in params
 
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.close_app(app_name, force=force)
 
         if result['success']:
-            yield CommandReturn(text=f"✓ {result.get('message')}")
+            yield CommandReturn(text=f"Closed: {app_name}")
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
-    async def top_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def top(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app listing."""
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.list_apps()
 
         if result['success']:
@@ -314,15 +317,16 @@ class LangTARS(Command):
 
             lines = ["**Running Applications:**\n"]
             lines.append('\n'.join(f"• {app}" for app in apps))
-            lines.append(f"\nTotal: {result.get('count', 0)} apps")
             yield CommandReturn(text='\n'.join(lines))
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
-    async def info_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def info(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle system info display."""
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.get_system_info()
 
         if result['success']:
@@ -334,12 +338,12 @@ class LangTARS(Command):
                 lines.append(f"• **{key}**: {value}")
             yield CommandReturn(text='\n'.join(lines))
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
-    async def search_handler(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    @staticmethod
+    async def search(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle file search."""
         params = context.crt_params
-
         if not params:
             yield CommandReturn(text="Usage: /tars search <pattern> [path]")
             return
@@ -347,14 +351,15 @@ class LangTARS(Command):
         pattern = params[0]
         path = params[1] if len(params) > 1 else '.'
 
-        from main import LangTARSPlugin
-        plugin = LangTARSPlugin()
+        from main import LangTARS
+        plugin = LangTARS()
+        await plugin.initialize()
         result = await plugin.search_files(pattern, path)
 
         if result['success']:
             files = result.get('files', [])
             if not files:
-                yield CommandReturn(text=f"No files found matching '{pattern}' in {result.get('path', path)}")
+                yield CommandReturn(text=f"No files found matching '{pattern}'")
                 return
 
             lines = [f"**Search Results for '{pattern}':**\n"]
@@ -366,4 +371,30 @@ class LangTARS(Command):
 
             yield CommandReturn(text='\n'.join(lines))
         else:
-            yield CommandReturn(text=f"✗ Failed: {result.get('error', 'Unknown error')}")
+            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
+
+    @staticmethod
+    async def default(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Handle default case - show help."""
+        help_text = """LangTARS - Control your Mac through IM messages
+
+Available commands:
+  /tars shell <command>   - Execute shell command
+  /tars ps [filter]       - List running processes
+  /tars kill <pid|name>   - Kill a process
+  /tars ls [path]         - List directory contents
+  /tars cat <path>        - Read file content
+  /tars write <path> <content> - Write file
+  /tars open <app|url>   - Open an application or URL
+  /tars close <app>      - Close an application
+  /tars top              - List running applications
+  /tars info             - Show system information
+  /tars search <pattern> - Search files
+
+Examples:
+  /tars info
+  /tars shell ls -la
+  /tars ps python
+  /tars open Safari
+"""
+        yield CommandReturn(text=help_text)

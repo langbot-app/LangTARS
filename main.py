@@ -502,3 +502,209 @@ Examples:
                 return (self._workspace_path / requested).resolve()
         except Exception:
             return None
+
+    # ========== Tool/Command Helper Methods ==========
+    # These methods are called by components/commands/langtars.py and tools
+
+    async def list_processes(self, filter_pattern: str | None = None, limit: int = 20) -> dict[str, Any]:
+        """List running processes. Used by tools and commands."""
+        if not self.config.get('enable_process', True):
+            return {'success': False, 'error': 'Process management is disabled', 'processes': []}
+
+        if filter_pattern:
+            command = f'ps aux | grep -E "{filter_pattern}" | grep -v grep | head -n {limit}'
+        else:
+            command = f'ps aux | head -n {limit + 1}'
+
+        result = await self.run_shell(command)
+        if not result['success']:
+            return {'success': False, 'error': result.get('error', 'Unknown error'), 'processes': []}
+
+        processes = []
+        for line in result['stdout'].strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split(None, 10)
+            if len(parts) >= 11:
+                processes.append({
+                    'user': parts[0],
+                    'pid': parts[1],
+                    'cpu': parts[2],
+                    'mem': parts[3],
+                    'command': parts[10] if len(parts) > 10 else parts[-1],
+                })
+
+        return {'success': True, 'processes': processes[:limit]}
+
+    async def kill_process(self, target: str, force: bool = False) -> dict[str, Any]:
+        """Kill a process by name or PID."""
+        if not self.config.get('enable_process', True):
+            return {'success': False, 'error': 'Process management is disabled'}
+
+        is_pid = target.isdigit()
+        signal = 'KILL' if force else 'TERM'
+
+        if is_pid:
+            command = f'kill -{signal} {target}'
+        else:
+            command = f'pkill -{signal} "{target}"'
+
+        result = await self.run_shell(command)
+        if result['success']:
+            return {'success': True, 'message': f'Process terminated: {target}'}
+        else:
+            return {'success': False, 'error': result.get('stderr', 'Unknown error')}
+
+    async def list_directory(self, path: str = '.', show_hidden: bool = False) -> dict[str, Any]:
+        """List directory contents."""
+        if not self.config.get('enable_file', True):
+            return {'success': False, 'error': 'File operations are disabled', 'items': []}
+
+        dir_path = self._resolve_path(path)
+        if not dir_path:
+            return {'success': False, 'error': 'Access denied: path outside workspace', 'items': []}
+
+        try:
+            items = []
+            for item in dir_path.iterdir():
+                if item.name.startswith('.') and not show_hidden:
+                    continue
+                items.append({
+                    'name': item.name,
+                    'type': 'directory' if item.is_dir() else 'file',
+                    'size': item.stat().st_size if item.is_file() else 0
+                })
+            return {'success': True, 'path': str(dir_path), 'items': items, 'count': len(items)}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'items': []}
+
+    async def read_file(self, path: str) -> dict[str, Any]:
+        """Read file content."""
+        if not self.config.get('enable_file', True):
+            return {'success': False, 'error': 'File operations are disabled'}
+
+        file_path = self._resolve_path(path)
+        if not file_path:
+            return {'success': False, 'error': 'Access denied: path outside workspace'}
+
+        try:
+            if not file_path.is_file():
+                return {'success': False, 'error': 'Not a file'}
+
+            # Check if binary
+            try:
+                content = file_path.read_text(encoding='utf-8')
+                return {'success': True, 'path': str(file_path), 'content': content, 'size': len(content)}
+            except UnicodeDecodeError:
+                return {'success': True, 'path': str(file_path), 'is_binary': True, 'size': file_path.stat().st_size}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    async def write_file(self, path: str, content: str, _mode: str = 'w') -> dict[str, Any]:
+        """Write content to a file."""
+        if not self.config.get('enable_file', True):
+            return {'success': False, 'error': 'File operations are disabled'}
+
+        file_path = self._resolve_path(path)
+        if not file_path:
+            return {'success': False, 'error': 'Access denied: path outside workspace'}
+
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding='utf-8')
+            return {'success': True, 'path': str(file_path), 'message': 'File written successfully'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    async def open_app(self, app_name: str | None = None, url: str | None = None) -> dict[str, Any]:
+        """Open an application or URL."""
+        if not self.config.get('enable_app', True):
+            return {'success': False, 'error': 'App control is disabled'}
+
+        if url:
+            command = f'open "{url}"'
+        elif app_name:
+            command = f'open -a "{app_name}"'
+        else:
+            return {'success': False, 'error': 'Please provide app_name or url'}
+
+        result = await self.run_shell(command)
+        if result['success']:
+            return {'success': True, 'message': f'Opened: {url or app_name}'}
+        else:
+            return {'success': False, 'error': result.get('stderr', 'Unknown error')}
+
+    async def close_app(self, app_name: str, force: bool = False) -> dict[str, Any]:
+        """Close an application."""
+        if not self.config.get('enable_app', True):
+            return {'success': False, 'error': 'App control is disabled'}
+
+        signal = '9' if force else 'TERM'
+        command = f'pkill -{signal} "{app_name}"'
+
+        result = await self.run_shell(command)
+        if result['success']:
+            return {'success': True, 'message': f'Closed: {app_name}'}
+        else:
+            return {'success': False, 'error': result.get('stderr', 'Unknown error')}
+
+    async def list_apps(self, limit: int = 20) -> dict[str, Any]:
+        """List running applications."""
+        if not self.config.get('enable_app', True):
+            return {'success': False, 'error': 'App control is disabled', 'apps': []}
+
+        try:
+            command = f'''osascript -e 'tell application "System Events" to get name of every process' 2>/dev/null | tr ',' '\\n' | head -n {limit}'''
+            result = await self.run_shell(command)
+
+            if result['success']:
+                apps = [a.strip() for a in result['stdout'].strip().split('\n') if a.strip()]
+                return {'success': True, 'apps': apps, 'count': len(apps)}
+            else:
+                return {'success': False, 'error': 'Failed to list applications'}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'apps': []}
+
+    async def get_system_info(self) -> dict[str, Any]:
+        """Get system information."""
+        try:
+            info = {
+                'platform': platform.system(),
+                'platform_version': platform.version(),
+                'architecture': platform.architecture()[0],
+                'processor': platform.processor(),
+                'hostname': platform.node(),
+                'python_version': platform.python_version(),
+            }
+
+            uptime_result = await self.run_shell('uptime')
+            if uptime_result['success']:
+                info['uptime'] = uptime_result['stdout'].strip()
+
+            return {'success': True, 'info': info}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    async def search_files(self, pattern: str, path: str = '.', recursive: bool = True) -> dict[str, Any]:
+        """Search for files matching a pattern."""
+        if not self.config.get('enable_file', True):
+            return {'success': False, 'error': 'File operations are disabled', 'files': []}
+
+        search_path = self._resolve_path(path)
+        if not search_path:
+            return {'success': False, 'error': 'Access denied: path outside workspace', 'files': []}
+
+        try:
+            if recursive:
+                command = f'find "{search_path}" -name "*{pattern}*" -type f 2>/dev/null | head -n 50'
+            else:
+                command = f'ls "{search_path}" | grep -i "*{pattern}*" | head -n 50'
+
+            result = await self.run_shell(command)
+            if result['success']:
+                files = [f.strip() for f in result['stdout'].strip().split('\n') if f.strip()]
+                return {'success': True, 'files': files, 'count': len(files), 'path': str(search_path)}
+            else:
+                return {'success': False, 'error': result.get('error', 'Unknown error'), 'files': []}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'files': []}
