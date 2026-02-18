@@ -13,16 +13,16 @@ Control your Mac through IM messages using LangBot (like OpenClaw).
 
 | Command | Description |
 |---------|-------------|
-| `/tars shell <command>` | Execute a shell command |
-| `/tars ps [filter]` | List running processes |
-| `/tars kill <name|PID>` | Kill a process |
-| `/tars ls [path]` | List directory contents |
-| `/tars cat <path>` | Read file content |
-| `/tars write <path> <content>` | Write to a file |
-| `/tars open <app>` | Open an application |
-| `/tars close <app>` | Close an application |
-| `/tars top` | List running apps |
-| `/tars info` | Show system info |
+| `!tars shell <command>` | Execute a shell command |
+| `!tars ps [filter]` | List running processes |
+| `!tars kill [name]` | Kill a process |
+| `!tars ls [path]` | List directory contents |
+| `!tars cat <path>` | Read file content |
+| `!tars write <path> <content>` | Write to a file |
+| `!tars open <app>` | Open an application |
+| `!tars close <app>` | Close an application |
+| `!tars top` | List running apps |
+| `!tars info` | Show system info |
 
 ## Configuration
 
