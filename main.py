@@ -95,6 +95,18 @@ class LangTARS(Command, BasePlugin):
                 usage="/tars apps [limit]",
                 aliases=["listapps"],
             ),
+            "stop": Subcommand(
+                subcommand=self.cmd_stop,
+                help="Stop the current running task",
+                usage="/tars stop",
+                aliases=["pause", "cancel"],
+            ),
+            "status": Subcommand(
+                subcommand=self.cmd_status,
+                help="Check current task status",
+                usage="/tars status",
+                aliases=["running"],
+            ),
             "help": Subcommand(
                 subcommand=self.cmd_help,
                 help="Show help",
@@ -436,6 +448,35 @@ class LangTARS(Command, BasePlugin):
         except Exception as e:
             return CommandReturn(text=f"Error: {str(e)}")
 
+    async def cmd_stop(self, context: ExecuteContext) -> CommandReturn:
+        """Stop the current running task."""
+        # Import here to avoid circular import
+        from components.tools.planner import PlannerTool
+
+        if PlannerTool.is_task_stopped():
+            return CommandReturn(text="Task is already stopped.")
+
+        PlannerTool.stop_task()
+        return CommandReturn(text="Task has been stopped.")
+
+    async def cmd_status(self, context: ExecuteContext) -> CommandReturn:
+        """Check current task status."""
+        # Import here to avoid circular import
+        from components.tools.planner import PlannerTool
+
+        current_task = PlannerTool.get_current_task()
+        is_stopped = PlannerTool.is_task_stopped()
+
+        if not current_task.get("task_description"):
+            return CommandReturn(text="No task is currently running.")
+
+        status_text = f"Task Status:\n"
+        status_text += f"  Running: {not is_stopped}\n"
+        status_text += f"  Stopped: {is_stopped}\n"
+        status_text += f"  Task: {current_task.get('task_description', 'Unknown')[:50]}..."
+
+        return CommandReturn(text=status_text)
+
     async def cmd_help(self, context: ExecuteContext) -> CommandReturn:
         """Show help."""
         help_text = """LangTARS - Control your Mac through IM messages
@@ -450,6 +491,8 @@ Available commands:
   /tars open <app|url>   - Open an application or URL
   /tars close <app>      - Close an application
   /tars apps [limit]     - List running applications
+  /tars stop             - Stop the current task
+  /tars status            - Check task status
   /tars help             - Show this help
 
 Examples:
@@ -709,3 +752,32 @@ Examples:
                 return {'success': False, 'error': result.get('error', 'Unknown error'), 'files': []}
         except Exception as e:
             return {'success': False, 'error': str(e), 'files': []}
+
+    async def run_applescript(self, script: str) -> dict[str, Any]:
+        """Execute an AppleScript script."""
+        if not self.config.get('enable_applescript', True):
+            return {'success': False, 'error': 'AppleScript execution is disabled'}
+
+        if not script:
+            return {'success': False, 'error': 'No script provided'}
+
+        try:
+            # Use osascript to execute AppleScript
+            command = f'osascript -e \'{script.replace("\'", "\\\'")}\''
+            result = await self.run_shell(command)
+
+            if result['success']:
+                return {
+                    'success': True,
+                    'stdout': result['stdout'],
+                    'stderr': result['stderr'],
+                    'returncode': result['returncode']
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': result.get('stderr', result.get('error', 'Unknown error')),
+                    'stdout': result.get('stdout', '')
+                }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}

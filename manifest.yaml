@@ -6,8 +6,8 @@ metadata:
   repository: 'https://github.com/langbot-app/LangTARS'
   version: 0.1.0
   description:
-    en_US: 'Control your Mac through IM messages - run shell commands, manage processes, files, and applications (like OpenClaw)'
-    zh_Hans: '通过 IM 消息控制您的 Mac - 运行 shell 命令、管理进程、文件和应用程序（类 OpenClaw）'
+    en_US: 'LangBot Native Plugin - Control your Mac through IM messages using autonomous AI planning (Nanobot-powered, OpenClaw-style)'
+    zh_Hans: 'LangBot 原生插件 - 通过 IM 消息使用自主 AI 规划能力控制您的 Mac（基于 Nanobot 内核，类 OpenClaw 设计）'
   label:
     en_US: LangTARS
     zh_Hans: LangTARS
@@ -104,6 +104,26 @@ spec:
         en_US: 'LLM model to use for autonomous task planning (uses first available if not set)'
         zh_Hans: '用于自主任务规划的 LLM 模型（未设置时使用第一个可用模型）'
       default: ''
+    - name: planner_rate_limit_seconds
+      type: number
+      required: false
+      label:
+        en_US: Rate Limit (seconds)
+        zh_Hans: 速率限制（秒）
+      description:
+        en_US: 'Minimum seconds between LLM calls to avoid rate limits (default: 1 second)'
+        zh_Hans: 'LLM 调用之间的最小间隔时间，防止触发速率限制（默认：1秒）'
+      default: 1
+    - name: planner_auto_load_mcp
+      type: boolean
+      required: false
+      label:
+        en_US: Auto-load MCP Tools
+        zh_Hans: 自动加载 MCP 工具
+      description:
+        en_US: 'Automatically load tools from MCP servers and other plugins (default: true)'
+        zh_Hans: '自动从 MCP 服务器和其他插件加载工具（默认：true）'
+      default: true
   components:
     Command:
       fromDirs:

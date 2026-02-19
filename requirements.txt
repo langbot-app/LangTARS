@@ -1,2 +1,2 @@
 # Mac Control Plugin for LangBot
-# No additional dependencies required
+aiohttp
