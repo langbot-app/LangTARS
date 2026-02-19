@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from langbot_plugin.api.definition.components.command.command import Command, Subcommand
+from langbot_plugin.api.definition.plugin import BasePlugin
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
 
 
-class LangTARS(Command):
+class LangTARS(Command, BasePlugin):
     """LangTARS Plugin - Control your Mac through IM messages (like OpenClaw)"""
 
     # Safety constants

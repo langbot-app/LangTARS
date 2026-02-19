@@ -95,6 +95,13 @@ class LangTARS(Command):
             aliases=["find"],
         )
 
+        self.registered_subcommands["auto"] = Subcommand(
+            subcommand=LanTARSCommand.auto,
+            help="Autonomous task planning (AI-powered)",
+            usage="/tars auto <task description>",
+            aliases=["plan", "run"],
+        )
+
         # Wildcard subcommand to handle no subcommand
         self.registered_subcommands["*"] = Subcommand(
             subcommand=LanTARSCommand.default,
@@ -390,11 +397,97 @@ Available commands:
   /tars top              - List running applications
   /tars info             - Show system information
   /tars search <pattern> - Search files
+  /tars auto <task>      - Autonomous task planning (AI-powered)
 
 Examples:
   /tars info
   /tars shell ls -la
   /tars ps python
   /tars open Safari
+  /tars auto Open Safari and search for AI news
 """
         yield CommandReturn(text=help_text)
+
+    @staticmethod
+    async def auto(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Handle autonomous task planning using ReAct loop."""
+        # Get the task from params
+        params = context.crt_params
+        if not params:
+            yield CommandReturn(text="""Usage: /tars auto <task description>
+
+Example:
+  /tars auto Open Safari and search for AI news
+""")
+            return
+
+        task = ' '.join(params)
+
+        # Get config from the command's plugin instance
+        config = _self_cmd.plugin.get_config()
+        # Ensure max_iterations is an integer
+        max_iterations = int(config.get('planner_max_iterations', 5) or 5)
+
+        # Get model: use configured model first, then fall back to auto-detect
+        configured_model_uuid = config.get('planner_model_uuid', '')
+
+        # Auto-detect model: use get_llm_models() to get available models
+        try:
+            models = await _self_cmd.plugin.get_llm_models()
+            if not models:
+                yield CommandReturn(text="""Error: No LLM models available.
+
+Please configure an LLM model in the pipeline settings first.
+Go to Pipelines → Configure → Select LLM Model
+""")
+                return
+
+            # If user configured a specific model, validate it exists
+            if configured_model_uuid:
+                # Find the configured model
+                for model in models:
+                    if isinstance(model, dict) and model.get('uuid') == configured_model_uuid:
+                        llm_model_uuid = configured_model_uuid
+                        break
+                else:
+                    # Model not found, fall back to first available
+                    llm_model_uuid = models[0].get('uuid', '') if isinstance(models[0], dict) else models[0]
+            else:
+                # No model configured, use first available
+                first_model = models[0]
+                if isinstance(first_model, dict):
+                    llm_model_uuid = first_model.get('uuid', '')
+                else:
+                    llm_model_uuid = first_model
+
+            if not llm_model_uuid:
+                yield CommandReturn(text="Error: Model does not have a valid UUID")
+                return
+        except Exception as e:
+            yield CommandReturn(text=f"Error: Failed to get available models: {str(e)}")
+            return
+
+        # Import and use the plugin instance
+        try:
+            # _self_cmd is the Command object, _self_cmd.plugin is the main LangTARS plugin
+            # plugin needs invoke_llm (from BasePlugin), helper_plugin needs helper methods
+            from components.tools.planner import PlannerTool
+            planner = PlannerTool()
+
+            # Execute the planner - pass _self_cmd.plugin as plugin (has invoke_llm)
+            # and _self_cmd.plugin as helper_plugin (has run_shell, read_file, etc.)
+            result = await planner.execute_task(
+                task=task,
+                max_iterations=max_iterations,
+                llm_model_uuid=llm_model_uuid,
+                plugin=_self_cmd.plugin,  # Main plugin with invoke_llm
+                helper_plugin=_self_cmd.plugin,
+                session=context.session,
+                query_id=context.query_id
+            )
+
+            yield CommandReturn(text=result)
+
+        except Exception as e:
+            import traceback
+            yield CommandReturn(text=f"Error executing task: {str(e)}\n\n{traceback.format_exc()}")

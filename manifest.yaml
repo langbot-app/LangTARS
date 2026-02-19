@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Plugin
 metadata:
-  author: User
-  name: langtars
-  repository: ''
+  author: wangcham
+  name: langTARS
+  repository: 'https://github.com/langbot-app/LangTARS'
   version: 0.1.0
   description:
     en_US: 'Control your Mac through IM messages - run shell commands, manage processes, files, and applications (like OpenClaw)'
@@ -84,6 +84,26 @@ spec:
         en_US: 'Enable application open/close operations'
         zh_Hans: '启用应用程序打开/关闭操作'
       default: true
+    - name: planner_max_iterations
+      type: number
+      required: false
+      label:
+        en_US: Planner Max Iterations
+        zh_Hans: 规划器最大迭代次数
+      description:
+        en_US: 'Maximum number of ReAct loop iterations for autonomous task planning'
+        zh_Hans: '自主任务规划的最大 ReAct 循环迭代次数'
+      default: 5
+    - name: planner_model_uuid
+      type: llm-model-selector
+      required: false
+      label:
+        en_US: Planner Model
+        zh_Hans: 规划器模型
+      description:
+        en_US: 'LLM model to use for autonomous task planning (uses first available if not set)'
+        zh_Hans: '用于自主任务规划的 LLM 模型（未设置时使用第一个可用模型）'
+      default: ''
   components:
     Command:
       fromDirs:
