@@ -15,7 +15,7 @@
 
 ## 什么是 LangTARS？
 
-LangTARS 是基于 **Nanobot 内核**开发的 **LangBot 原生插件**，旨在为 LangBot 用户带来 **OpenClaw** 般的体验。它使您能够通过 IM 消息使用自主 AI 任务规划来控制您的 Mac。如同《星际穿越》中的 **塔斯(TARS)** 一样，为您忠诚工作。
+LangTARS 是借鉴 **Nanobot** 的 ReAct 理念开发的 **LangBot 原生插件**，旨在为 LangBot 用户带来 **OpenClaw** 般的体验。它使您能够通过 IM 消息使用自主 AI 任务规划来控制您的 Mac。如同《星际穿越》中的 **塔斯(TARS)** 一样，为您忠诚工作。
 
 与 [OpenClaw](https://github.com/openclaw/openclaw) 类似，LangTARS 允许 AI 助手在您的 Mac 上执行真实操作——但具有 LangBot 插件的简洁与优雅。
 

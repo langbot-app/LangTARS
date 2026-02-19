@@ -15,7 +15,7 @@
 
 ## What is LangTARS?
 
-LangTARS is a **LangBot native plugin** built on the Nanobot kernel, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your Mac through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
+LangTARS is a **LangBot native plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your Mac through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
 
 Like [OpenClaw](https://github.com/openclaw/openclaw), LangTARS allows AI assistants to execute real actions on your Mac—but with the simplicity and elegance of a LangBot plugin.
 
