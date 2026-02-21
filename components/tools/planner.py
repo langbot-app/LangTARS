@@ -71,16 +71,14 @@ class PlannerTool(Tool):
     @classmethod
     def stop_task(cls, task_id: str = "default") -> bool:
         """Stop the current running task - writes to file for cross-process communication"""
-        import os
         # Set class variable
         cls._task_stopped = True
         # Also write to file for cross-process communication
         try:
             with open(cls._stop_file_path, 'w') as f:
                 f.write(f"stopped:{task_id}")
-            logger.info(f"[STOP] Stop file created at {cls._stop_file_path}, exists: {os.path.exists(cls._stop_file_path)}")
         except Exception as e:
-            logger.error(f"[STOP] Failed to create stop file: {e}")
+            logger.error(f"Failed to create stop file: {e}")
         return True
 
     @classmethod
@@ -89,11 +87,9 @@ class PlannerTool(Tool):
         import os
         # First check class variable
         if cls._task_stopped:
-            logger.info(f"[STOP CHECK] Class var is stopped: True")
             return True
         # Also check file for cross-process communication
         file_exists = cls._is_stopped_from_file()
-        logger.info(f"[STOP CHECK] File exists: {file_exists}, path: {cls._stop_file_path}")
         if file_exists:
             cls._task_stopped = True
             return True
@@ -131,12 +127,28 @@ Response: {"tool": "shell", "arguments": {"command": "ls -la"}}
 
 User: "Open Safari and go to github.com"
 Response: {"tool": "safari_navigate", "arguments": {"url": "https://github.com"}}
+# Tool result: {"success": true, ...}
+# Then respond with:
+DONE: Opened github.com in Safari
+
+User: "Open Safari, navigate to github.com and get content"
+Response: {"tool": "safari_navigate", "arguments": {"url": "https://github.com"}}
+# Tool result: {"success": true, ...}
+Response: {"tool": "safari_get_content", "arguments": {}}
+# Tool result: {"success": true, "stdout": "Title: GitHub, ...", ...}
+# Then respond with:
+DONE: GitHub page content: [summary of content]
 
 User: "Open Chrome and search for AI news"
 Response: {"tool": "chrome_navigate", "arguments": {"url": "https://www.google.com/search?q=AI+news"}}
+# Tool result: {"success": true, ...}
+# Then respond with:
+DONE: Opened Chrome and searched for AI news
 
 User: "Open a website"
 Response: {"tool": "browser_navigate", "arguments": {"url": "https://example.com"}}
+# After receiving success result, respond with:
+DONE: Opened the website
 
 User: "What's the weather?"
 Response: {"tool": "fetch_url", "arguments": {"url": "https://weather.com"}}
@@ -161,6 +173,9 @@ Response: DONE: Successfully completed the task...
 6. Use chrome_* tools when user specifically mentions Chrome
 7. Use shell for terminal commands
 8. Use fetch_url to get web page content
+9. After a tool returns success ({"success": true}), IMMEDIATELY respond with "DONE: Your summary" - do NOT call the same tool again!
+10. If user asks for content/summary, fetch it first THEN return DONE with the summary
+11. NEVER respond with natural language - always use JSON or DONE: format
 
 If no tool can accomplish the user's request, then respond with NEED_SKILL: and describe what you need.
 """

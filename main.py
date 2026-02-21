@@ -530,20 +530,13 @@ class LangTARS(Command, BasePlugin):
 
     async def cmd_stop(self, context: ExecuteContext) -> CommandReturn:
         """Stop the current running task."""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info("[STOP CMD] cmd_stop called!")
-
         # Import here to avoid circular import
         from components.tools.planner import PlannerTool
-
-        logger.info(f"[STOP CMD] is_task_stopped before: {PlannerTool.is_task_stopped()}")
 
         if PlannerTool.is_task_stopped():
             return CommandReturn(text="Task is already stopped.")
 
         PlannerTool.stop_task()
-        logger.info(f"[STOP CMD] is_task_stopped after: {PlannerTool.is_task_stopped()}")
         return CommandReturn(text="Task has been stopped.")
 
     async def cmd_status(self, context: ExecuteContext) -> CommandReturn:
@@ -637,7 +630,9 @@ Examples:
             return await self.cmd_cat(context)
         elif any(kw in query_lower for kw in ['open', 'launch', 'start']):
             return await self.cmd_open(context)
-        elif any(kw in query_lower for kw in ['close', 'quit', 'stop', 'kill']):
+        elif any(kw in query_lower for kw in ['stop']):
+            return await self.cmd_stop(context)
+        elif any(kw in query_lower for kw in ['close', 'quit', 'kill']):
             return await self.cmd_kill(context) if any(kw in query_lower for kw in ['kill', 'process']) else await self.cmd_close(context)
         elif any(kw in query_lower for kw in ['app', 'application', 'software']):
             return await self.cmd_apps(context)

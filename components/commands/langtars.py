@@ -321,7 +321,6 @@ class LanTARSCommand:
     @staticmethod
     async def stop(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle task stopping."""
-        logger.info("[STOP] LanTARSCommand.stop called!")
         from components.tools.planner import PlannerTool
 
         if PlannerTool.is_task_stopped():
@@ -329,7 +328,6 @@ class LanTARSCommand:
             return
 
         PlannerTool.stop_task()
-        logger.info("[STOP] stop_task() called")
         yield CommandReturn(text="Task has been stopped.")
 
     @staticmethod
