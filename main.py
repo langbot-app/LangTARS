@@ -179,11 +179,10 @@ class LangTARS(Command, BasePlugin):
         # First load from LangBot (framework), then merge with local file
         local_config = self._load_config_from_file()
 
-        # Merge: LangBot config takes priority, but use local as defaults
+        # Merge: local config takes priority over framework defaults
         self.config = self.config or {}
-        for key, value in local_config.items():
-            if key not in self.config or self.config.get(key) is None:
-                self.config[key] = value
+        if local_config:
+            self.config = {**self.config, **local_config}
 
         workspace = self.config.get('workspace_path', '~/.langtars')
         self._workspace_path = Path(workspace).expanduser()

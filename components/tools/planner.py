@@ -39,6 +39,7 @@ class PlannerTool(Tool):
     # Class variable for task pause/stop control
     _task_stopped: bool = False
     _current_task_info: dict = {}
+    _invalid_response_count: int = 0  # Track consecutive invalid LLM responses
 
     # Tool registry instance
     _tool_registry: ToolRegistry | None = None
@@ -98,6 +99,7 @@ class PlannerTool(Tool):
         cls._task_stopped = False
         cls._current_task_info = {}
         cls._llm_call_count = 0
+        cls._invalid_response_count = 0
         cls._clear_stop_file()
 
     SYSTEM_PROMPT = """You are a task planning assistant. Your job is to help users accomplish tasks on their Mac by intelligently calling tools.
@@ -405,6 +407,15 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         continue
 
                     if content_str.strip():
+                        # Count consecutive invalid responses
+                        PlannerTool._invalid_response_count += 1
+                        invalid_response_count = PlannerTool._invalid_response_count
+
+                        # If too many consecutive invalid responses, force end
+                        if invalid_response_count >= 3:
+                            logger.info(f"LLM 返回了 {invalid_response_count} 次无效响应，强制结束任务")
+                            return f"无法完成任务。LLM 连续返回了 {invalid_response_count} 次无效响应（未调用工具）。\n\n最后响应：\n{content_str[:500]}"
+
                         messages.append(response)
                         continue
 
