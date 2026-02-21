@@ -71,24 +71,30 @@ class PlannerTool(Tool):
     @classmethod
     def stop_task(cls, task_id: str = "default") -> bool:
         """Stop the current running task - writes to file for cross-process communication"""
+        import os
         # Set class variable
         cls._task_stopped = True
         # Also write to file for cross-process communication
         try:
             with open(cls._stop_file_path, 'w') as f:
                 f.write(f"stopped:{task_id}")
-        except:
-            pass
+            logger.info(f"[STOP] Stop file created at {cls._stop_file_path}, exists: {os.path.exists(cls._stop_file_path)}")
+        except Exception as e:
+            logger.error(f"[STOP] Failed to create stop file: {e}")
         return True
 
     @classmethod
     def is_task_stopped(cls) -> bool:
         """Check if the current task has been stopped (checks both class var and file)"""
+        import os
         # First check class variable
         if cls._task_stopped:
+            logger.info(f"[STOP CHECK] Class var is stopped: True")
             return True
         # Also check file for cross-process communication
-        if cls._is_stopped_from_file():
+        file_exists = cls._is_stopped_from_file()
+        logger.info(f"[STOP CHECK] File exists: {file_exists}, path: {cls._stop_file_path}")
+        if file_exists:
             cls._task_stopped = True
             return True
         return False
@@ -205,13 +211,11 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         # Get configured model from plugin config
         config = plugin.get_config()
         configured_model_uuid = config.get('planner_model_uuid', '')
-        logger.info(f"配置的模型 UUID: {configured_model_uuid}")
 
         # Auto-detect model
         if not llm_model_uuid:
             try:
                 models = await plugin.get_llm_models()
-                logger.info(f"可用模型列表: {models}")
                 if not models:
                     return "Error: No LLM models available. Please configure a model in the pipeline settings."
 
@@ -219,10 +223,8 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     for model in models:
                         if isinstance(model, dict) and model.get('uuid') == configured_model_uuid:
                             llm_model_uuid = configured_model_uuid
-                            logger.info(f"使用配置的模型: {configured_model_uuid}")
                             break
                     else:
-                        logger.warning(f"配置的模型 UUID '{configured_model_uuid}' 未在可用模型列表中找到，使用第一个模型")
                         llm_model_uuid = models[0].get('uuid', '') if isinstance(models[0], dict) else models[0]
                 else:
                     first_model = models[0]
@@ -230,7 +232,6 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         llm_model_uuid = first_model.get('uuid', '')
                     else:
                         llm_model_uuid = first_model
-                    logger.info(f"未配置模型，使用第一个模型: {llm_model_uuid}")
 
                 if not llm_model_uuid:
                     return "Error: No LLM models available or model does not have a valid UUID."
@@ -290,15 +291,9 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         if not llm_model_uuid:
             return "Error: No LLM model specified. Please configure a model in the pipeline settings."
 
-        # Log the model being used
-        logger.info(f"===== 实际使用的 LLM 模型 UUID: {llm_model_uuid} =====")
-
         # Initialize registry if not provided
-        logger.info(f"DEBUG: registry={registry}, plugin={plugin}")
         if registry is None and plugin:
-            logger.info("DEBUG: 正在初始化 registry...")
             registry = await self._get_tool_registry(plugin)
-            logger.info(f"DEBUG: 初始化完成，registry={registry}")
 
         # Get rate limit from config
         config = plugin.get_config() if plugin else {}
@@ -309,19 +304,8 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         if registry:
             try:
                 tools_description = registry.get_tools_description()
-                tool_count = len(registry.get_all_tools())
-                logger.info(f"工具注册表: {tool_count} 个工具")
-                logger.info(f"tools_description 长度: {len(tools_description)}")
-                if tools_description:
-                    logger.info(f"tools_description 前500字符: {tools_description[:500]}")
-                else:
-                    logger.warning("tools_description 为空！列出所有工具名称:")
-                    for t in registry.get_all_tools():
-                        logger.warning(f"  - {t.name}")
             except Exception as e:
                 logger.error(f"获取 tools_description 失败: {e}")
-        else:
-            logger.error("registry 为 None!")
 
         # Build initial messages - start with system prompt
         messages = [
@@ -343,14 +327,14 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 
         # ReAct loop
         for iteration in range(max_iterations):
-            # Check if task has been stopped
-            if PlannerTool._task_stopped:
+            # Check if task has been stopped (use method to check file for cross-process)
+            if PlannerTool.is_task_stopped():
                 logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                 return "Task has been stopped by user."
 
             try:
                 # Check if stopped before LLM call
-                if PlannerTool._task_stopped:
+                if PlannerTool.is_task_stopped():
                     logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                     return "Task has been stopped by user."
 
@@ -363,19 +347,9 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     await asyncio.sleep(wait_time)
                 PlannerTool._last_llm_call_time = time.time()
 
-                # Increment LLM call count and log the start of LLM invocation
+                # Increment LLM call count
                 PlannerTool._llm_call_count += 1
                 logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次)")
-
-                # Log the messages being sent to LLM (for debugging)
-                logger.info(f"===== LLM 消息内容 (第 {PlannerTool._llm_call_count} 次) =====")
-                for i, msg in enumerate(messages):
-                    role = msg.role
-                    content_preview = str(msg.content)[:500] if msg.content else "(无内容)"
-                    if len(str(msg.content)) > 500:
-                        content_preview += "..."
-                    logger.info(f"[消息 {i}] role={role}: {content_preview}")
-                logger.info("=" * 50)
 
                 response = await plugin.invoke_llm(
                     llm_model_uuid=llm_model_uuid,
@@ -405,7 +379,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         )
 
                         # Check if stopped after tool execution
-                        if PlannerTool._task_stopped:
+                        if PlannerTool.is_task_stopped():
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task stopped by user. Last result:\n{result}"
 
@@ -442,7 +416,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         )
 
                         # Check if stopped after tool execution
-                        if PlannerTool._task_stopped:
+                        if PlannerTool.is_task_stopped():
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task stopped by user. Last result:\n{result}"
 

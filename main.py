@@ -86,7 +86,7 @@ class LangTARS(Command, BasePlugin):
                 subcommand=self.cmd_kill,
                 help="Kill a process",
                 usage="/tars kill <pid|name>",
-                aliases=["stop"],
+                aliases=[],
             ),
             "open": Subcommand(
                 subcommand=self.cmd_open,
@@ -170,22 +170,14 @@ class LangTARS(Command, BasePlugin):
 
     def set_config(self, config: dict[str, Any]) -> None:
         """Set and persist the config."""
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"[set_config] 收到配置更新: {config}")
         self.config = config
         # Save to local file for persistence
         self._save_config_to_file(config)
 
     async def initialize(self) -> None:
         """Initialize the plugin."""
-        import logging
-        logger = logging.getLogger(__name__)
-
         # First load from LangBot (framework), then merge with local file
-        logger.info(f"[initialize] 框架传入的初始配置: {self.config}")
         local_config = self._load_config_from_file()
-        logger.info(f"[initialize] 本地文件配置: {local_config}")
 
         # Convert string numbers to actual numbers for specific config keys
         if local_config:
@@ -200,7 +192,6 @@ class LangTARS(Command, BasePlugin):
         self.config = self.config or {}
         if local_config:
             self.config = {**local_config, **self.config}
-        logger.info(f"[initialize] 合并后最终配置: {self.config}")
 
         # Ensure reasonable rate limit to avoid 429 errors (default to 3 seconds if not set)
         if 'planner_rate_limit_seconds' not in self.config:
@@ -539,13 +530,20 @@ class LangTARS(Command, BasePlugin):
 
     async def cmd_stop(self, context: ExecuteContext) -> CommandReturn:
         """Stop the current running task."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("[STOP CMD] cmd_stop called!")
+
         # Import here to avoid circular import
         from components.tools.planner import PlannerTool
+
+        logger.info(f"[STOP CMD] is_task_stopped before: {PlannerTool.is_task_stopped()}")
 
         if PlannerTool.is_task_stopped():
             return CommandReturn(text="Task is already stopped.")
 
         PlannerTool.stop_task()
+        logger.info(f"[STOP CMD] is_task_stopped after: {PlannerTool.is_task_stopped()}")
         return CommandReturn(text="Task has been stopped.")
 
     async def cmd_status(self, context: ExecuteContext) -> CommandReturn:

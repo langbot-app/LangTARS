@@ -321,6 +321,7 @@ class LanTARSCommand:
     @staticmethod
     async def stop(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle task stopping."""
+        logger.info("[STOP] LanTARSCommand.stop called!")
         from components.tools.planner import PlannerTool
 
         if PlannerTool.is_task_stopped():
@@ -328,6 +329,7 @@ class LanTARSCommand:
             return
 
         PlannerTool.stop_task()
+        logger.info("[STOP] stop_task() called")
         yield CommandReturn(text="Task has been stopped.")
 
     @staticmethod
@@ -466,17 +468,13 @@ Go to Pipelines → Configure → Select LLM Model
 
             # If user configured a specific model, validate it exists
             if configured_model_uuid:
-                logger.info(f"[langtars.py] 配置的模型 UUID: {configured_model_uuid}")
-                logger.info(f"[langtars.py] 可用模型列表: {models}")
                 # Find the configured model
                 for model in models:
                     if isinstance(model, dict) and model.get('uuid') == configured_model_uuid:
                         llm_model_uuid = configured_model_uuid
-                        logger.info(f"[langtars.py] 找到配置的模型，使用: {configured_model_uuid}")
                         break
                 else:
                     # Model not found, fall back to first available
-                    logger.warning(f"[langtars.py] 配置的模型 '{configured_model_uuid}' 未在可用模型列表中找到，fallback 到第一个模型")
                     llm_model_uuid = models[0].get('uuid', '') if isinstance(models[0], dict) else models[0]
             else:
                 # No model configured, use first available
