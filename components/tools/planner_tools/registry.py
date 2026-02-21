@@ -39,6 +39,20 @@ from .browser import (
     BrowserPressKeyTool,
     BrowserSelectOptionTool,
     BrowserGetAttributeTool,
+    # Safari tools
+    SafariOpenTool,
+    SafariNavigateTool,
+    SafariGetContentTool,
+    SafariClickTool,
+    SafariTypeTool,
+    SafariPressKeyTool,
+    # Chrome tools
+    ChromeOpenTool,
+    ChromeNavigateTool,
+    ChromeGetContentTool,
+    ChromeClickTool,
+    ChromeTypeTool,
+    ChromePressKeyTool,
 )
 from .dynamic import DynamicToolLoader
 from .skills import SkillLoader, SkillToToolConverter
@@ -78,6 +92,20 @@ BUILTIN_TOOLS: list[type[BasePlannerTool]] = [
     BrowserPressKeyTool,
     BrowserSelectOptionTool,
     BrowserGetAttributeTool,
+    # Safari native tools
+    SafariOpenTool,
+    SafariNavigateTool,
+    SafariGetContentTool,
+    SafariClickTool,
+    SafariTypeTool,
+    SafariPressKeyTool,
+    # Chrome native tools
+    ChromeOpenTool,
+    ChromeNavigateTool,
+    ChromeGetContentTool,
+    ChromeClickTool,
+    ChromeTypeTool,
+    ChromePressKeyTool,
 ]
 
 

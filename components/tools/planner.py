@@ -53,8 +53,14 @@ NEED_SKILL: Description of what capability you need
 User: "List files in current directory"
 Response: {"tool": "shell", "arguments": {"command": "ls -la"}}
 
-User: "Open Safari"
-Response: {"tool": "open_app", "arguments": {"target": "Safari"}}
+User: "Open Safari and go to github.com"
+Response: {"tool": "safari_navigate", "arguments": {"url": "https://github.com"}}
+
+User: "Open Chrome and search for AI news"
+Response: {"tool": "chrome_navigate", "arguments": {"url": "https://www.google.com/search?q=AI+news"}}
+
+User: "Open a website"
+Response: {"tool": "browser_navigate", "arguments": {"url": "https://example.com"}}
 
 User: "What's the weather?"
 Response: {"tool": "fetch_url", "arguments": {"url": "https://weather.com"}}
@@ -62,13 +68,23 @@ Response: {"tool": "fetch_url", "arguments": {"url": "https://weather.com"}}
 User: "Task complete, show result"
 Response: DONE: Successfully completed the task...
 
+## Browser Selection Rules - VERY IMPORTANT:
+- If user says "open website" or "go to website" WITHOUT specifying browser → Use browser_navigate (Playwright)
+- If user says "open Safari" or "use Safari" → Use safari_navigate (controls real Safari app)
+- If user says "open Chrome" or "use Chrome" → Use chrome_navigate (controls real Chrome app)
+- For Safari: use safari_open, safari_navigate, safari_get_content, safari_click, safari_type, safari_press
+- For Chrome: use chrome_open, chrome_navigate, chrome_get_content, chrome_click, chrome_type, chrome_press
+- For general web automation: use browser_navigate, browser_click, browser_type, browser_screenshot
+
 ## Important Rules:
 1. ALWAYS try to use available tools before giving up
 2. ALWAYS respond with valid JSON when calling tools
 3. NEVER respond with natural language text when tools are needed
-4. Use browser_navigate, browser_click, browser_type, browser_screenshot for web automation
-5. Use shell for terminal commands
-6. Use fetch_url to get web page content
+4. Use browser_navigate for general web automation (Playwright)
+5. Use safari_* tools when user specifically mentions Safari
+6. Use chrome_* tools when user specifically mentions Chrome
+7. Use shell for terminal commands
+8. Use fetch_url to get web page content
 
 If no tool can accomplish the user's request, then respond with NEED_SKILL: and describe what you need.
 """

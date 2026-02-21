@@ -34,6 +34,35 @@ class BrowserManager:
     def timeout(self) -> int:
         return self.config.get('browser_timeout', 30) * 1000  # Convert to ms
 
+    def _get_browser_channel(self) -> str | None:
+        """Get browser channel for installation"""
+        # Use system browser if available (no installation needed)
+        if self.browser_type == 'chromium':
+            return 'chromium'  # Will use system chromium if available
+        return None
+
+    async def _try_auto_install(self) -> dict[str, Any]:
+        """Try to automatically install Playwright browsers"""
+        import subprocess
+        import sys
+
+        try:
+            # Try to install the browser
+            result = subprocess.run(
+                [sys.executable, '-m', 'playwright', 'install', self.browser_type],
+                capture_output=True,
+                text=True,
+                timeout=180
+            )
+            if result.returncode == 0:
+                return {'success': True, 'message': f'Installed {self.browser_type}'}
+            else:
+                return {'success': False, 'error': result.stderr}
+        except subprocess.TimeoutExpired:
+            return {'success': False, 'error': 'Installation timed out'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     async def initialize(self) -> dict[str, Any]:
         """Initialize Playwright and launch browser"""
         if self._initialized:
@@ -45,14 +74,37 @@ class BrowserManager:
         try:
             self._playwright = await async_playwright().start()
 
-            # Launch browser
-            if self.browser_type == 'firefox':
-                self._browser = await self._playwright.firefox.launch(headless=self.headless)
-            elif self.browser_type == 'webkit':
-                self._browser = await self._playwright.webkit.launch(headless=self.headless)
-            else:
-                # Default to chromium
-                self._browser = await self._playwright.chromium.launch(headless=self.headless)
+            # Try to launch browser
+            browser_launch_error = None
+            try:
+                if self.browser_type == 'firefox':
+                    self._browser = await self._playwright.firefox.launch(headless=self.headless)
+                elif self.browser_type == 'webkit':
+                    self._browser = await self._playwright.webkit.launch(headless=self.headless)
+                else:
+                    # Default to chromium
+                    self._browser = await self._playwright.chromium.launch(headless=self.headless)
+            except Exception as e:
+                browser_launch_error = str(e)
+                # Check if it's a missing browser error
+                if 'Executable doesn\'t exist' in browser_launch_error or 'no browser' in browser_launch_error.lower():
+                    # Try to auto-install
+                    install_result = await self._try_auto_install()
+                    if install_result['success']:
+                        # Retry launching
+                        if self.browser_type == 'firefox':
+                            self._browser = await self._playwright.firefox.launch(headless=self.headless)
+                        elif self.browser_type == 'webkit':
+                            self._browser = await self._playwright.webkit.launch(headless=self.headless)
+                        else:
+                            self._browser = await self._playwright.chromium.launch(headless=self.headless)
+                        browser_launch_error = None
+                    else:
+                        return {'success': False, 'error': f'Browser not installed. Please run: playwright install {self.browser_type}\n\nError: {browser_launch_error}'}
+
+            if browser_launch_error:
+                await self.cleanup()
+                return {'success': False, 'error': browser_launch_error}
 
             # Create context and page
             self._context = await self._browser.new_context(

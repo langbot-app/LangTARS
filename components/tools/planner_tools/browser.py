@@ -455,3 +455,341 @@ class BrowserGetAttributeTool(BasePlannerTool):
             arguments.get('selector', ''),
             arguments.get('attribute', '')
         )
+
+
+# ========== Safari Native Browser Tools ==========
+# Control the actual Safari app on Mac
+
+
+class SafariOpenTool(BasePlannerTool):
+    """Open Safari browser"""
+
+    @property
+    def name(self) -> str:
+        return "safari_open"
+
+    @property
+    def description(self) -> str:
+        return "Open Safari browser. Use when user explicitly says 'Safari'."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Optional URL to open in Safari"
+                }
+            }
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.safari_open(arguments.get('url'))
+
+
+class SafariNavigateTool(BasePlannerTool):
+    """Navigate to URL in Safari"""
+
+    @property
+    def name(self) -> str:
+        return "safari_navigate"
+
+    @property
+    def description(self) -> str:
+        return "Navigate to a URL in Safari. Use when user explicitly wants to use Safari."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to navigate to (e.g., 'https://github.com')"
+                }
+            },
+            "required": ["url"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.safari_navigate(arguments.get('url', ''))
+
+
+class SafariGetContentTool(BasePlannerTool):
+    """Get content from Safari"""
+
+    @property
+    def name(self) -> str:
+        return "safari_get_content"
+
+    @property
+    def description(self) -> str:
+        return "Get the current page content from Safari."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.safari_get_content()
+
+
+class SafariClickTool(BasePlannerTool):
+    """Click element in Safari"""
+
+    @property
+    def name(self) -> str:
+        return "safari_click"
+
+    @property
+    def description(self) -> str:
+        return "Click an element in Safari using CSS selector."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector of the element to click"
+                }
+            },
+            "required": ["selector"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.safari_click(arguments.get('selector', ''))
+
+
+class SafariTypeTool(BasePlannerTool):
+    """Type text in Safari"""
+
+    @property
+    def name(self) -> str:
+        return "safari_type"
+
+    @property
+    def description(self) -> str:
+        return "Type text into an input field in Safari."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector of the input element"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to type"
+                }
+            },
+            "required": ["selector", "text"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.safari_type(
+            arguments.get('selector', ''),
+            arguments.get('text', '')
+        )
+
+
+class SafariPressKeyTool(BasePlannerTool):
+    """Press key in Safari"""
+
+    @property
+    def name(self) -> str:
+        return "safari_press"
+
+    @property
+    def description(self) -> str:
+        return "Press a keyboard key in Safari."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Key to press (e.g., 'Enter', 'Tab')"
+                }
+            },
+            "required": ["key"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.safari_press_key(arguments.get('key', ''))
+
+
+# ========== Chrome Native Browser Tools ==========
+# Control the actual Google Chrome app on Mac
+
+
+class ChromeOpenTool(BasePlannerTool):
+    """Open Google Chrome browser"""
+
+    @property
+    def name(self) -> str:
+        return "chrome_open"
+
+    @property
+    def description(self) -> str:
+        return "Open Google Chrome browser. Use when user explicitly says 'Chrome'."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Optional URL to open in Chrome"
+                }
+            }
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.chrome_open(arguments.get('url'))
+
+
+class ChromeNavigateTool(BasePlannerTool):
+    """Navigate to URL in Chrome"""
+
+    @property
+    def name(self) -> str:
+        return "chrome_navigate"
+
+    @property
+    def description(self) -> str:
+        return "Navigate to a URL in Google Chrome. Use when user explicitly wants to use Chrome."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to navigate to (e.g., 'https://github.com')"
+                }
+            },
+            "required": ["url"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.chrome_navigate(arguments.get('url', ''))
+
+
+class ChromeGetContentTool(BasePlannerTool):
+    """Get content from Chrome"""
+
+    @property
+    def name(self) -> str:
+        return "chrome_get_content"
+
+    @property
+    def description(self) -> str:
+        return "Get the current page content from Google Chrome."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.chrome_get_content()
+
+
+class ChromeClickTool(BasePlannerTool):
+    """Click element in Chrome"""
+
+    @property
+    def name(self) -> str:
+        return "chrome_click"
+
+    @property
+    def description(self) -> str:
+        return "Click an element in Chrome using CSS selector."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector of the element to click"
+                }
+            },
+            "required": ["selector"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.chrome_click(arguments.get('selector', ''))
+
+
+class ChromeTypeTool(BasePlannerTool):
+    """Type text in Chrome"""
+
+    @property
+    def name(self) -> str:
+        return "chrome_type"
+
+    @property
+    def description(self) -> str:
+        return "Type text into an input field in Chrome."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector of the input element"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to type"
+                }
+            },
+            "required": ["selector", "text"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.chrome_type(
+            arguments.get('selector', ''),
+            arguments.get('text', '')
+        )
+
+
+class ChromePressKeyTool(BasePlannerTool):
+    """Press key in Chrome"""
+
+    @property
+    def name(self) -> str:
+        return "chrome_press"
+
+    @property
+    def description(self) -> str:
+        return "Press a keyboard key in Chrome."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Key to press (e.g., 'Enter', 'Tab')"
+                }
+            },
+            "required": ["key"]
+        }
+
+    async def execute(self, helper_plugin: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        return await helper_plugin.chrome_press_key(arguments.get('key', ''))

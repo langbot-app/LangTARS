@@ -849,9 +849,24 @@ Examples:
             return {'success': False, 'error': 'No script provided'}
 
         try:
-            # Use osascript to execute AppleScript
-            command = f'osascript -e \'{script.replace("\'", "\\\'")}\''
-            result = await self.run_shell(command)
+            # Use osascript with heredoc syntax to avoid quoting issues
+            # Write script to temp file and execute
+            import tempfile
+            import os
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.scpt', delete=False) as f:
+                f.write(script)
+                temp_file = f.name
+
+            try:
+                command = f'osascript "{temp_file}"'
+                result = await self.run_shell(command)
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
 
             if result['success']:
                 return {
@@ -1003,3 +1018,253 @@ Examples:
             await self._browser_manager.cleanup()
             self._browser_manager = None
         return {'success': True, 'message': 'Browser cleaned up'}
+
+    # ========== Safari Native Control ==========
+
+    async def safari_open(self, url: str | None = None) -> dict[str, Any]:
+        """Open Safari (optionally with URL)"""
+        if not self.config.get('enable_safari', True):
+            return {'success': False, 'error': 'Safari control is disabled'}
+
+        if url:
+            return await self.safari_navigate(url)
+
+        script = '''tell application "Safari" to activate'''
+        return await self.run_applescript(script)
+
+    async def safari_navigate(self, url: str) -> dict[str, Any]:
+        """Navigate to URL in Safari using AppleScript"""
+        if not self.config.get('enable_safari', True):
+            return {'success': False, 'error': 'Safari control is disabled'}
+
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
+        # Escape quotes for AppleScript
+        url_escaped = url.replace('"', '\\"')
+        script = f'''
+tell application "Safari"
+    activate
+    if (count of windows) = 0 then
+        make new document
+    end if
+    tell window 1
+        set current tab to (make new tab with properties {{URL:"{url_escaped}"}})
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
+
+    async def safari_get_content(self) -> dict[str, Any]:
+        """Get content from Safari using AppleScript"""
+        if not self.config.get('enable_safari', True):
+            return {'success': False, 'error': 'Safari control is disabled'}
+
+        # First try with JavaScript (requires user to enable in Safari settings)
+        script = '''
+tell application "Safari"
+    if (count of windows) is 0 then
+        return "No Safari windows"
+    end if
+    set tabTitle to name of current tab of front window
+    set tabURL to URL of current tab of front window
+    set tabContent to do JavaScript "document.body.innerText" in current tab of front window
+    return "Title: " & tabTitle & ", URL: " & tabURL & ", Content: " & tabContent
+end tell
+'''
+        result = await self.run_applescript(script)
+
+        # Check if it's the JavaScript permission error
+        error_msg = result.get('error', '')
+        if 'Allow JavaScript from Apple Events' in error_msg:
+            # Fall back to getting just title and URL without JavaScript
+            script_no_js = '''
+tell application "Safari"
+    if (count of windows) is 0 then
+        return "No Safari windows"
+    end if
+    set tabTitle to name of current tab of front window
+    set tabURL to URL of current tab of front window
+    return "Title: " & tabTitle & ", URL: " & tabURL & " (Enable Safari > Settings > Advanced > Allow JavaScript from Apple Events to get page content)"
+end tell
+'''
+            result = await self.run_applescript(script_no_js)
+            if result.get('success'):
+                return {
+                    'success': True,
+                    'text': result.get('stdout', ''),
+                    'warning': 'JavaScript disabled in Safari. Enable it in Settings > Privacy & Security > Allow JavaScript from Apple Events'
+                }
+
+        if result.get('success'):
+            return {'success': True, 'text': result.get('stdout', '')}
+        return result
+
+    async def safari_click(self, selector: str) -> dict[str, Any]:
+        """Click element in Safari using JavaScript"""
+        if not self.config.get('enable_safari', True):
+            return {'success': False, 'error': 'Safari control is disabled'}
+
+        # Escape quotes
+        selector_escaped = selector.replace("'", "\\'")
+        script = f'''
+tell application "Safari"
+    activate
+    tell front window
+        tell current tab
+            do JavaScript "document.querySelector('{selector_escaped}')?.click()"
+        end tell
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
+
+    async def safari_type(self, selector: str, text: str) -> dict[str, Any]:
+        """Type text into element in Safari"""
+        if not self.config.get('enable_safari', True):
+            return {'success': False, 'error': 'Safari control is disabled'}
+
+        # Escape quotes
+        selector_escaped = selector.replace("'", "\\'")
+        text_escaped = text.replace("'", "\\'")
+        script = f'''
+tell application "Safari"
+    activate
+    tell front window
+        tell current tab
+            do JavaScript "document.querySelector('{selector_escaped}').value = '{text_escaped}'"
+        end tell
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
+
+    async def safari_press_key(self, key: str) -> dict[str, Any]:
+        """Press key in Safari"""
+        if not self.config.get('enable_safari', True):
+            return {'success': False, 'error': 'Safari control is disabled'}
+
+        script = f'''
+tell application "Safari"
+    activate
+    tell front window
+        tell current tab
+            do JavaScript "document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {{key:'{key}', bubbles:true}}))"
+        end tell
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
+
+    # ========== Chrome Native Control ==========
+
+    async def chrome_open(self, url: str | None = None) -> dict[str, Any]:
+        """Open Chrome (optionally with URL)"""
+        if not self.config.get('enable_chrome', True):
+            return {'success': False, 'error': 'Chrome control is disabled'}
+
+        if url:
+            return await self.chrome_navigate(url)
+
+        script = '''tell application "Google Chrome" to activate'''
+        return await self.run_applescript(script)
+
+    async def chrome_navigate(self, url: str) -> dict[str, Any]:
+        """Navigate to URL in Chrome using AppleScript"""
+        if not self.config.get('enable_chrome', True):
+            return {'success': False, 'error': 'Chrome control is disabled'}
+
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
+        # Escape quotes for AppleScript
+        url_escaped = url.replace('"', '\\"')
+        script = f'''
+tell application "Google Chrome"
+    activate
+    if (count of windows) = 0 then
+        make new window
+    end if
+    tell window 1
+        set current tab to (make new tab with properties {{URL:"{url_escaped}"}})
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
+
+    async def chrome_get_content(self) -> dict[str, Any]:
+        """Get content from Chrome using AppleScript"""
+        if not self.config.get('enable_chrome', True):
+            return {'success': False, 'error': 'Chrome control is disabled'}
+
+        script = '''
+tell application "Google Chrome"
+    if (count of windows) is 0 then
+        return "No Chrome windows"
+    end if
+    set tabTitle to title of active tab of front window
+    set tabURL to URL of active tab of front window
+    execute front window's active tab javascript "document.body.innerText"
+    return "Title: " & tabTitle & ", URL: " & tabURL
+end tell
+'''
+        result = await self.run_applescript(script)
+        if result.get('success'):
+            return {'success': True, 'text': result.get('stdout', '')}
+        return result
+
+    async def chrome_click(self, selector: str) -> dict[str, Any]:
+        """Click element in Chrome using JavaScript"""
+        if not self.config.get('enable_chrome', True):
+            return {'success': False, 'error': 'Chrome control is disabled'}
+
+        # Escape quotes
+        selector_escaped = selector.replace("'", "\\'")
+        script = f'''
+tell application "Google Chrome"
+    activate
+    tell front window
+        tell active tab
+            execute javascript "document.querySelector('{selector_escaped}')?.click()"
+        end tell
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
+
+    async def chrome_type(self, selector: str, text: str) -> dict[str, Any]:
+        """Type text into element in Chrome"""
+        if not self.config.get('enable_chrome', True):
+            return {'success': False, 'error': 'Chrome control is disabled'}
+
+        # Escape quotes
+        selector_escaped = selector.replace("'", "\\'")
+        text_escaped = text.replace("'", "\\'")
+        script = f'''
+tell application "Google Chrome"
+    activate
+    tell front window
+        tell active tab
+            execute javascript "document.querySelector('{selector_escaped}').value = '{text_escaped}'"
+        end tell
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
+
+    async def chrome_press_key(self, key: str) -> dict[str, Any]:
+        """Press key in Chrome"""
+        if not self.config.get('enable_chrome', True):
+            return {'success': False, 'error': 'Chrome control is disabled'}
+
+        script = f'''
+tell application "Google Chrome"
+    activate
+    tell front window
+        tell active tab
+            execute javascript "document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {{key:'{key}', bubbles:true}}))"
+        end tell
+    end tell
+end tell
+'''
+        return await self.run_applescript(script)
