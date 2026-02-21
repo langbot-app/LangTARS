@@ -15,6 +15,8 @@ from langbot_plugin.api.definition.plugin import BasePlugin
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
 
+from components.tools.browser import BrowserManager
+
 
 class LangTARS(Command, BasePlugin):
     """LangTARS Plugin - Control your Mac through IM messages (like OpenClaw)"""
@@ -38,6 +40,7 @@ class LangTARS(Command, BasePlugin):
         self._allowed_users: set[str] = set()
         self._command_whitelist: list[str] = []
         self._initialized = False
+        self._browser_manager: BrowserManager | None = None
 
         # Register subcommands
         self.registered_subcommands = {
@@ -107,6 +110,12 @@ class LangTARS(Command, BasePlugin):
                 usage="/tars status",
                 aliases=["running"],
             ),
+            "config": Subcommand(
+                subcommand=self.cmd_config,
+                help="Show or save configuration",
+                usage="/tars config [save]",
+                aliases=["cfg", "setting"],
+            ),
             "help": Subcommand(
                 subcommand=self.cmd_help,
                 help="Show help",
@@ -125,15 +134,61 @@ class LangTARS(Command, BasePlugin):
         """Get the config of the plugin."""
         return self.config
 
+    def _get_config_file_path(self) -> Path:
+        """Get the path to the local config file."""
+        config_dir = Path.home() / ".langtars"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / "config.json"
+
+    def _load_config_from_file(self) -> dict[str, Any]:
+        """Load config from local file as backup."""
+        config_file = self._get_config_file_path()
+        if config_file.exists():
+            try:
+                import json
+                return json.loads(config_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _save_config_to_file(self, config: dict[str, Any]) -> None:
+        """Save config to local file."""
+        config_file = self._get_config_file_path()
+        try:
+            import json
+            config_file.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            print(f"[DEBUG] Failed to save config: {e}")
+
+    def set_config(self, config: dict[str, Any]) -> None:
+        """Set and persist the config."""
+        self.config = config
+        # Save to local file for persistence
+        self._save_config_to_file(config)
+
     async def initialize(self) -> None:
         """Initialize the plugin."""
+        # First load from LangBot (framework), then merge with local file
+        local_config = self._load_config_from_file()
+
+        # Merge: LangBot config takes priority, but use local as defaults
         self.config = self.config or {}
+        for key, value in local_config.items():
+            if key not in self.config or self.config.get(key) is None:
+                self.config[key] = value
+
         workspace = self.config.get('workspace_path', '~/.langtars')
         self._workspace_path = Path(workspace).expanduser()
         self._workspace_path.mkdir(parents=True, exist_ok=True)
         self._allowed_users = set(self.config.get('allowed_users', []))
         self._command_whitelist = self.config.get('command_whitelist', [])
         self._initialized = True
+
+        # Save current config to local file for persistence
+        self._save_config_to_file(self.config)
+
+        # Initialize browser manager
+        self._browser_manager = BrowserManager(self.config)
 
     # ========== Safety Methods ==========
 
@@ -477,6 +532,38 @@ class LangTARS(Command, BasePlugin):
 
         return CommandReturn(text=status_text)
 
+    async def cmd_config(self, context: ExecuteContext) -> CommandReturn:
+        """Show or save configuration."""
+        import json
+
+        action = context.crt_params[0] if len(context.crt_params) > 0 else "show"
+
+        if action == "save":
+            # Save current config to file
+            self._save_config_to_file(self.config)
+            return CommandReturn(text=f"配置已保存到: {self._get_config_file_path()}")
+        elif action == "show":
+            # Show current config
+            config_file = self._get_config_file_path()
+            config_info = f"""当前配置 (保存在: {config_file}):
+
+"""
+            # Show important settings
+            important_keys = [
+                'enable_shell', 'enable_process', 'enable_file', 'enable_app',
+                'enable_browser', 'browser_type', 'browser_headless',
+                'planner_max_iterations', 'planner_auto_load_skills',
+                'workspace_path', 'allowed_users'
+            ]
+            for key in important_keys:
+                value = self.config.get(key)
+                if value is not None:
+                    config_info += f"  {key}: {value}\n"
+
+            return CommandReturn(text=config_info)
+        else:
+            return CommandReturn(text="用法: /tars config [show|save]\n  show - 显示当前配置\n  save - 保存当前配置")
+
     async def cmd_help(self, context: ExecuteContext) -> CommandReturn:
         """Show help."""
         help_text = """LangTARS - Control your Mac through IM messages
@@ -781,3 +868,138 @@ Examples:
                 }
         except Exception as e:
             return {'success': False, 'error': str(e)}
+
+    # ========== Browser Methods ==========
+
+    def _get_browser_manager(self) -> BrowserManager:
+        """Get or create browser manager"""
+        if self._browser_manager is None:
+            self._browser_manager = BrowserManager(self.config)
+        return self._browser_manager
+
+    async def browser_navigate(self, url: str) -> dict[str, Any]:
+        """Navigate to a URL"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.navigate(url)
+
+    async def browser_click(self, selector: str) -> dict[str, Any]:
+        """Click an element"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.click(selector)
+
+    async def browser_type(self, selector: str, text: str, clear_first: bool = True) -> dict[str, Any]:
+        """Type text into an element"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.type_text(selector, text, clear_first)
+
+    async def browser_screenshot(self, path: str | None = None) -> dict[str, Any]:
+        """Take a screenshot"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.screenshot(path)
+
+    async def browser_get_content(self, selector: str | None = None) -> dict[str, Any]:
+        """Get page content"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.get_content(selector)
+
+    async def browser_wait(self, selector: str, timeout: int = 30) -> dict[str, Any]:
+        """Wait for element"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.wait_for_selector(selector, timeout)
+
+    async def browser_scroll(self, x: int = 0, y: int = 500) -> dict[str, Any]:
+        """Scroll the page"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.scroll(x, y)
+
+    async def browser_execute_script(self, script: str) -> dict[str, Any]:
+        """Execute JavaScript"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.execute_script(script)
+
+    async def browser_new_tab(self, url: str = 'about:blank') -> dict[str, Any]:
+        """Create new tab"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.new_tab(url)
+
+    async def browser_close_tab(self) -> dict[str, Any]:
+        """Close current tab"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.close_tab()
+
+    async def browser_get_url(self) -> dict[str, Any]:
+        """Get current URL"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.get_current_url()
+
+    async def browser_reload(self) -> dict[str, Any]:
+        """Reload page"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.reload()
+
+    async def browser_press_key(self, selector: str, key: str) -> dict[str, Any]:
+        """Press a key"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.press_key(selector, key)
+
+    async def browser_select_option(self, selector: str, value: str) -> dict[str, Any]:
+        """Select option in dropdown"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.select_option(selector, value)
+
+    async def browser_get_attribute(self, selector: str, attribute: str) -> dict[str, Any]:
+        """Get element attribute"""
+        if not self.config.get('enable_browser', True):
+            return {'success': False, 'error': 'Browser automation is disabled'}
+
+        browser = self._get_browser_manager()
+        return await browser.get_attribute(selector, attribute)
+
+    async def browser_cleanup(self) -> dict[str, Any]:
+        """Cleanup browser resources"""
+        if self._browser_manager:
+            await self._browser_manager.cleanup()
+            self._browser_manager = None
+        return {'success': True, 'message': 'Browser cleaned up'}

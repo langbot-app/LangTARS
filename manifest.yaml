@@ -2,12 +2,12 @@ apiVersion: v1
 kind: Plugin
 metadata:
   author: wangcham
-  name: langTARS
+  name: LangTARS
   repository: 'https://github.com/langbot-app/LangTARS'
   version: 0.1.0
   description:
-    en_US: 'LangBot Native Plugin - Control your Mac through IM messages using autonomous AI planning (inspired by Nanobot ReAct, OpenClaw-style, like TARS from Interstellar)'
-    zh_Hans: 'LangBot 原生插件 - 通过 IM 消息使用自主 AI 规划能力控制您的 Mac（借鉴 Nanobot ReAct 理念，类 OpenClaw 设计，如《星际穿越》中的塔斯）'
+    en_US: 'Native Claw-like Plugin - Control your Mac through IM messages using autonomous AI planning (inspired by Nanobot ReAct, OpenClaw-style, like TARS from Interstellar)'
+    zh_Hans: '原生类 Claw 插件 - 通过 IM 消息使用自主 AI 规划能力控制您的 Mac（借鉴 Nanobot ReAct 理念，类 OpenClaw 设计，如《星际穿越》中的塔斯）'
   label:
     en_US: LangTARS
     zh_Hans: LangTARS
@@ -114,6 +114,16 @@ spec:
         en_US: 'Minimum seconds between LLM calls to avoid rate limits (default: 1 second)'
         zh_Hans: 'LLM 调用之间的最小间隔时间，防止触发速率限制（默认：1秒）'
       default: 1
+    - name: enable_applescript
+      type: boolean
+      required: false
+      label:
+        en_US: Enable AppleScript
+        zh_Hans: 启用 AppleScript
+      description:
+        en_US: 'Enable AppleScript execution for UI automation'
+        zh_Hans: '启用 AppleScript 执行以进行 UI 自动化'
+      default: true
     - name: planner_auto_load_mcp
       type: boolean
       required: false
@@ -124,6 +134,66 @@ spec:
         en_US: 'Automatically load tools from MCP servers and other plugins (default: true)'
         zh_Hans: '自动从 MCP 服务器和其他插件加载工具（默认：true）'
       default: true
+    - name: enable_browser
+      type: boolean
+      required: false
+      label:
+        en_US: Enable Browser Automation
+        zh_Hans: 启用浏览器自动化
+      description:
+        en_US: 'Enable browser automation using Playwright'
+        zh_Hans: '使用 Playwright 启用浏览器自动化'
+      default: true
+    - name: browser_type
+      type: string
+      required: false
+      label:
+        en_US: Browser Type
+        zh_Hans: 浏览器类型
+      description:
+        en_US: 'Browser engine to use (chromium, firefox, webkit)'
+        zh_Hans: '使用的浏览器引擎 (chromium, firefox, webkit)'
+      default: chromium
+    - name: browser_headless
+      type: boolean
+      required: false
+      label:
+        en_US: Browser Headless Mode
+        zh_Hans: 浏览器无头模式
+      description:
+        en_US: 'Run browser in headless mode (no visible window)'
+        zh_Hans: '以无头模式运行浏览器（无可见窗口）'
+      default: false
+    - name: browser_timeout
+      type: number
+      required: false
+      label:
+        en_US: Browser Timeout (seconds)
+        zh_Hans: 浏览器超时（秒）
+      description:
+        en_US: 'Default timeout for browser operations'
+        zh_Hans: '浏览器操作的默认超时时间'
+      default: 30
+    - name: planner_auto_load_skills
+      type: boolean
+      required: false
+      label:
+        en_US: Auto-load Skills
+        zh_Hans: 自动加载 Skills
+      description:
+        en_US: 'Automatically load skills from ~/.claude/skills directory (default: true)'
+        zh_Hans: '自动从 ~/.claude/skills 目录加载 skills（默认：true）'
+      default: true
+    - name: skills_path
+      type: string
+      required: false
+      label:
+        en_US: Skills Directory
+        zh_Hans: Skills 目录
+      description:
+        en_US: 'Path to skills directory (default: ~/.claude/skills)'
+        zh_Hans: 'Skills 目录路径（默认：~/.claude/skills）'
+      default: ~/.claude/skills
   components:
     Command:
       fromDirs:

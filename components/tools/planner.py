@@ -34,27 +34,43 @@ class PlannerTool(Tool):
 
     SYSTEM_PROMPT = """You are a task planning assistant. Your job is to help users accomplish tasks on their Mac by intelligently calling tools.
 
-Task execution rules:
-1. Understand the user's request
-2. Plan the steps needed to complete the task
-3. Execute steps one by one using the appropriate tools
-4. After each tool execution, analyze the result and decide next steps
-5. When task is complete, provide a summary
+AVAILABLE TOOLS:
+You MUST use the tools listed below to accomplish tasks. NEVER claim you cannot do something without trying the tools first.
 
-When you need to use a tool, respond in this JSON format:
+## Response Format - VERY IMPORTANT:
+
+When you need to execute a tool, you MUST respond with ONLY a JSON object in this exact format:
 {"tool": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
 
-For example:
-{"tool": "shell", "arguments": {"command": "ls -la"}}
+When the task is COMPLETED, respond with ONLY:
+DONE: Your summary here
 
-After executing a tool, continue the conversation with the results.
+When you need a skill that doesn't exist, respond with ONLY:
+NEED_SKILL: Description of what capability you need
 
-Important:
-- Always explain what you're doing before taking action
-- If something fails, try alternative approaches
-- When the task is complete, start your final response with "DONE:" followed by a summary
-- Keep your responses concise but informative
-- Use fetch_url to get content from URLs when needed
+## Examples:
+
+User: "List files in current directory"
+Response: {"tool": "shell", "arguments": {"command": "ls -la"}}
+
+User: "Open Safari"
+Response: {"tool": "open_app", "arguments": {"target": "Safari"}}
+
+User: "What's the weather?"
+Response: {"tool": "fetch_url", "arguments": {"url": "https://weather.com"}}
+
+User: "Task complete, show result"
+Response: DONE: Successfully completed the task...
+
+## Important Rules:
+1. ALWAYS try to use available tools before giving up
+2. ALWAYS respond with valid JSON when calling tools
+3. NEVER respond with natural language text when tools are needed
+4. Use browser_navigate, browser_click, browser_type, browser_screenshot for web automation
+5. Use shell for terminal commands
+6. Use fetch_url to get web page content
+
+If no tool can accomplish the user's request, then respond with NEED_SKILL: and describe what you need.
 """
 
     async def _get_tool_registry(self) -> ToolRegistry:
@@ -162,6 +178,8 @@ Important:
         # Import main module to get helper methods
         from main import LangTARS
         helper_plugin = LangTARS()
+        # Pass the config to the helper plugin so browser tools work
+        helper_plugin.config = config.copy()
         await helper_plugin.initialize()
 
         return await self.execute_task(
@@ -223,12 +241,12 @@ Important:
                 return "Task has been stopped by user."
 
             try:
-                # Add tools description to the last user message if this is first iteration
-                if iteration == 0:
-                    messages[-1] = provider_message.Message(
-                        role="user",
-                        content=f"{task}\n\nAvailable tools:\n{tools_description}"
-                    )
+                # Add tools description to the last user message
+                # Always include tools description to remind LLM of available tools
+                messages[-1] = provider_message.Message(
+                    role="user",
+                    content=f"{task}\n\nIMPORTANT: Use a tool to complete this task. Available tools:\n{tools_description}\n\nRemember: Respond with JSON format only: {{\"tool\": \"name\", \"arguments\": {{...}}}}"
+                )
 
                 # Debug: print model info before invoking LLM
                 print(f"[DEBUG] Invoking LLM with model_uuid: {llm_model_uuid}")
@@ -262,6 +280,11 @@ Important:
                     content_str = str(response.content)
                     if content_str.strip().upper().startswith("DONE:"):
                         return content_str[5:].strip()
+
+                    # Check if LLM indicates it needs a skill
+                    if content_str.strip().upper().startswith("NEED_SKILL:"):
+                        skill_needed = content_str[11:].strip()
+                        return self._generate_skill_suggestion(skill_needed)
 
                     # Try to parse JSON tool call from content
                     tool_call = self._parse_tool_call_from_content(content_str)
@@ -304,11 +327,105 @@ Important:
                         content_str = str(response.content)
                         if content_str.strip().upper().startswith("DONE:"):
                             return content_str[5:].strip()
+                        # Check if LLM indicates it needs a skill
+                        if content_str.strip().upper().startswith("NEED_SKILL:"):
+                            skill_needed = content_str[11:].strip()
+                            return self._generate_skill_suggestion(skill_needed)
 
             except Exception as e:
-                return f"Error during execution: {str(e)}"
+                error_msg = str(e)
+                # Check for specific error types
+                if "429" in error_msg or "rate limit" in error_msg.lower():
+                    return f"""错误: LLM API 请求过于频繁或余额不足。
+
+请检查:
+1. 账户是否有足够的余额
+2. 是否开启了速率限制
+
+可以稍后再试，或等待几秒钟后重试。
+
+错误详情: {error_msg[:200]}"""
+                return f"Error during execution: {error_msg}"
 
         return f"Task reached maximum iterations ({max_iterations}) without completion."
+
+    def _generate_skill_suggestion(self, skill_needed: str) -> str:
+        """Generate a suggestion for the user when a skill is needed."""
+        # Check if skill loader is available
+        skill_info = ""
+        install_command = ""
+        found_skills = []
+
+        if PlannerTool._tool_registry and PlannerTool._tool_registry._skill_loader:
+            try:
+                # Try to search for relevant skills
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                found_skills = loop.run_until_complete(
+                    PlannerTool._tool_registry._skill_loader.search_skills(skill_needed)
+                )
+                loop.close()
+
+                if found_skills:
+                    skill_info = "\n\n找到以下相关 Skills:\n"
+                    for skill in found_skills[:5]:  # Show up to 5 skills
+                        skill_info += f"- {skill.name}: {skill.description}\n"
+
+                    # Try to auto-install the first matching skill
+                    first_skill = found_skills[0]
+                    install_result = self._try_auto_install(first_skill.name)
+                    if install_result["success"]:
+                        return f"""我发现了相关技能「{first_skill.name}」，正在自动安装...
+
+安装成功！技能「{first_skill.name}」已安装。
+
+请再次发送任务，我将使用新安装的技能来完成你的请求。
+"""
+            except Exception as e:
+                print(f"[DEBUG] Failed to search skills: {e}")
+
+        # If no skills found or auto-install failed, provide manual instructions
+        return f"""抱歉，我无法完成这个任务，因为缺少必要的工具/技能。
+
+需要的技能: {skill_needed}{skill_info}
+
+要解决这个问题，你可以:
+
+1. 安装 ClawHub Skills:
+   - 在 ~/.claude/skills/ 目录下添加相应的 skill
+   - 或者从 GitHub 安装，例如:
+     git clone https://github.com/langbot-app/clawhub-weather.git ~/.claude/skills/weather
+
+2. 配置 MCP 服务器:
+   - 在 LangBot 设置中添加支持该功能的 MCP 服务器
+
+3. 手动执行:
+   - 如果你有其他方式完成这个任务，可以直接告诉我
+
+常见技能的 GitHub 仓库:
+- 天气: https://github.com/langbot-app/clawhub-weather
+- 邮件: https://github.com/langbot-app/clawhub-email
+- 等等...
+"""
+
+    def _try_auto_install(self, skill_name: str) -> dict[str, Any]:
+        """Try to automatically install a skill"""
+        if not PlannerTool._tool_registry or not PlannerTool._tool_registry._skill_loader:
+            return {"success": False, "error": "Skill loader not available"}
+
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                PlannerTool._tool_registry._skill_loader.install_skill(skill_name)
+            )
+            loop.close()
+            return result
+        except Exception as e:
+            print(f"[DEBUG] Auto-install failed: {e}")
+            return {"success": False, "error": str(e)}
 
     def _parse_tool_call_from_content(self, content: str):
         """Parse JSON tool call from LLM response content."""
@@ -336,7 +453,8 @@ Important:
                 if tool and arguments:
                     class MockToolCall:
                         def __init__(self, name, args):
-                            self.id = f"call_{id(self)}"
+                            import uuid
+                            self.id = f"call_{uuid.uuid4().hex[:8]}"
                             self.function = type('obj', (object,), {'name': name, 'arguments': args})()
                     return MockToolCall(tool, arguments)
             except (json.JSONDecodeError, KeyError):
@@ -364,13 +482,24 @@ Important:
         tool = None
         if registry:
             tool = registry.get_tool(tool_name)
+            if tool:
+                print(f"[DEBUG] Found tool '{tool_name}' in registry: {type(tool).__name__}")
+            else:
+                print(f"[DEBUG] Tool '{tool_name}' not found in registry")
 
         # Execute the tool
         if isinstance(tool, BasePlannerTool):
             try:
-                return await tool.execute(helper_plugin, arguments)
+                print(f"[DEBUG] Executing tool '{tool_name}' with args: {arguments}")
+                result = await tool.execute(helper_plugin, arguments)
+                print(f"[DEBUG] Tool result: {result}")
+                return result
             except Exception as e:
-                return {"error": str(e)}
+                import traceback
+                error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                print(f"[DEBUG] {error_msg}")
+                traceback.print_exc()
+                return {"error": error_msg}
 
         # Fallback: execute built-in tools directly
         try:

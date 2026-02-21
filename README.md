@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>LangTARS</strong> — LangBot Native Plugin
+  <strong>LangTARS</strong> — Native Claw-Like Plugin
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 
 ## What is LangTARS?
 
-LangTARS is a **LangBot native plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your Mac through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
+LangTARS is a **native Claw-like plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your Mac through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
 
 Like [OpenClaw](https://github.com/openclaw/openclaw), LangTARS allows AI assistants to execute real actions on your Mac—but with the simplicity and elegance of a LangBot plugin.
 
@@ -69,6 +69,7 @@ These commands are available for testing and direct control:
 
 | Command | Description |
 |---------|-------------|
+| `!tars auto <task>` | Autonomous task planning (AI-powered) |
 | `!tars shell <command>` | Execute a shell command |
 | `!tars ps [filter]` | List running processes |
 | `!tars kill <pid\|name>` | Kill a process |
@@ -92,10 +93,17 @@ Configure LangTARS through LangBot's settings:
 | `enable_process` | Enable process management | true |
 | `enable_file` | Enable file operations | true |
 | `enable_app` | Enable app control | true |
+| `enable_applescript` | Enable AppleScript execution | true |
+| `enable_browser` | Enable browser automation (Playwright) | true |
+| `browser_type` | Browser engine (chromium/firefox/webkit) | chromium |
+| `browser_headless` | Run browser in headless mode | false |
+| `browser_timeout` | Browser operation timeout (seconds) | 30 |
 | `planner_max_iterations` | Max ReAct loop iterations | 5 |
 | `planner_model_uuid` | LLM model for task planning | (first available) |
 | `planner_rate_limit_seconds` | Rate limit between LLM calls | 1 |
 | `planner_auto_load_mcp` | Auto-load MCP tools | true |
+| `planner_auto_load_skills` | Auto-load skills from ~/.claude/skills | true |
+| `skills_path` | Skills directory path | ~/.claude/skills |
 
 ## Safety Features
 

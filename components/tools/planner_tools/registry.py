@@ -23,7 +23,25 @@ from .file import (
     SearchFilesTool,
 )
 from .network import FetchURLTool
+from .browser import (
+    BrowserNavigateTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserScreenshotTool,
+    BrowserGetContentTool,
+    BrowserWaitTool,
+    BrowserScrollTool,
+    BrowserExecuteScriptTool,
+    BrowserNewTabTool,
+    BrowserCloseTabTool,
+    BrowserGetUrlTool,
+    BrowserReloadTool,
+    BrowserPressKeyTool,
+    BrowserSelectOptionTool,
+    BrowserGetAttributeTool,
+)
 from .dynamic import DynamicToolLoader
+from .skills import SkillLoader, SkillToToolConverter
 
 
 # Built-in tools that are always available
@@ -44,6 +62,22 @@ BUILTIN_TOOLS: list[type[BasePlannerTool]] = [
     SearchFilesTool,
     # Network tools
     FetchURLTool,
+    # Browser tools
+    BrowserNavigateTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserScreenshotTool,
+    BrowserGetContentTool,
+    BrowserWaitTool,
+    BrowserScrollTool,
+    BrowserExecuteScriptTool,
+    BrowserNewTabTool,
+    BrowserCloseTabTool,
+    BrowserGetUrlTool,
+    BrowserReloadTool,
+    BrowserPressKeyTool,
+    BrowserSelectOptionTool,
+    BrowserGetAttributeTool,
 ]
 
 
@@ -54,6 +88,7 @@ class ToolRegistry:
         self.plugin = plugin
         self._builtin_tools: dict[str, BasePlannerTool] = {}
         self._dynamic_loader: DynamicToolLoader | None = None
+        self._skill_loader: SkillLoader | None = None
         self._initialized = False
 
     async def initialize(self):
@@ -69,7 +104,27 @@ class ToolRegistry:
         # Initialize dynamic tool loader
         self._dynamic_loader = DynamicToolLoader(self.plugin)
 
+        # Initialize skill loader
+        config = self.plugin.get_config() if self.plugin else {}
+        self._skill_loader = SkillLoader(config)
+        await self._skill_loader.initialize()
+
+        # Register skills as tools
+        await self._register_skills()
+
         self._initialized = True
+
+    async def _register_skills(self):
+        """Register loaded skills as tools"""
+        if not self._skill_loader:
+            return
+
+        skills = self._skill_loader.get_all_skills()
+        for skill in skills:
+            tool = SkillToToolConverter.convert(skill)
+            if tool:
+                self._builtin_tools[tool.name] = tool
+                print(f"[DEBUG] Registered skill as tool: {tool.name}")
 
     def get_tool(self, name: str) -> BasePlannerTool | None:
         """Get a tool by name"""
