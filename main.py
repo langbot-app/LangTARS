@@ -170,19 +170,46 @@ class LangTARS(Command, BasePlugin):
 
     def set_config(self, config: dict[str, Any]) -> None:
         """Set and persist the config."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[set_config] 收到配置更新: {config}")
         self.config = config
         # Save to local file for persistence
         self._save_config_to_file(config)
 
     async def initialize(self) -> None:
         """Initialize the plugin."""
-        # First load from LangBot (framework), then merge with local file
-        local_config = self._load_config_from_file()
+        import logging
+        logger = logging.getLogger(__name__)
 
-        # Merge: local config takes priority over framework defaults
+        # First load from LangBot (framework), then merge with local file
+        logger.info(f"[initialize] 框架传入的初始配置: {self.config}")
+        local_config = self._load_config_from_file()
+        logger.info(f"[initialize] 本地文件配置: {local_config}")
+
+        # Convert string numbers to actual numbers for specific config keys
+        if local_config:
+            for key in ['planner_max_iterations', 'planner_rate_limit_seconds', 'browser_timeout']:
+                if key in local_config and isinstance(local_config[key], str):
+                    try:
+                        local_config[key] = int(local_config[key])
+                    except (ValueError, TypeError):
+                        pass
+
+        # Merge: framework config takes priority over local file (framework is the source of truth)
         self.config = self.config or {}
         if local_config:
-            self.config = {**self.config, **local_config}
+            self.config = {**local_config, **self.config}
+        logger.info(f"[initialize] 合并后最终配置: {self.config}")
+
+        # Ensure reasonable rate limit to avoid 429 errors (default to 3 seconds if not set)
+        if 'planner_rate_limit_seconds' not in self.config:
+            self.config['planner_rate_limit_seconds'] = 3
+        elif isinstance(self.config['planner_rate_limit_seconds'], str):
+            try:
+                self.config['planner_rate_limit_seconds'] = int(self.config['planner_rate_limit_seconds'])
+            except (ValueError, TypeError):
+                self.config['planner_rate_limit_seconds'] = 3
 
         workspace = self.config.get('workspace_path', '~/.langtars')
         self._workspace_path = Path(workspace).expanduser()

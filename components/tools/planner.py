@@ -159,12 +159,13 @@ Response: DONE: Successfully completed the task...
 If no tool can accomplish the user's request, then respond with NEED_SKILL: and describe what you need.
 """
 
-    async def _get_tool_registry(self) -> ToolRegistry:
+    async def _get_tool_registry(self, plugin=None) -> ToolRegistry:
         """Get or create the tool registry"""
         if PlannerTool._tool_registry is None:
-            plugin = getattr(self, 'plugin', None)
-            if plugin:
-                PlannerTool._tool_registry = ToolRegistry(plugin)
+            # Use provided plugin or try to get from self
+            p = plugin if plugin else getattr(self, 'plugin', None)
+            if p:
+                PlannerTool._tool_registry = ToolRegistry(p)
                 await PlannerTool._tool_registry.initialize()
         return PlannerTool._tool_registry
 
@@ -204,11 +205,13 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         # Get configured model from plugin config
         config = plugin.get_config()
         configured_model_uuid = config.get('planner_model_uuid', '')
+        logger.info(f"配置的模型 UUID: {configured_model_uuid}")
 
         # Auto-detect model
         if not llm_model_uuid:
             try:
                 models = await plugin.get_llm_models()
+                logger.info(f"可用模型列表: {models}")
                 if not models:
                     return "Error: No LLM models available. Please configure a model in the pipeline settings."
 
@@ -216,8 +219,10 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     for model in models:
                         if isinstance(model, dict) and model.get('uuid') == configured_model_uuid:
                             llm_model_uuid = configured_model_uuid
+                            logger.info(f"使用配置的模型: {configured_model_uuid}")
                             break
                     else:
+                        logger.warning(f"配置的模型 UUID '{configured_model_uuid}' 未在可用模型列表中找到，使用第一个模型")
                         llm_model_uuid = models[0].get('uuid', '') if isinstance(models[0], dict) else models[0]
                 else:
                     first_model = models[0]
@@ -225,6 +230,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         llm_model_uuid = first_model.get('uuid', '')
                     else:
                         llm_model_uuid = first_model
+                    logger.info(f"未配置模型，使用第一个模型: {llm_model_uuid}")
 
                 if not llm_model_uuid:
                     return "Error: No LLM models available or model does not have a valid UUID."
@@ -284,12 +290,38 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         if not llm_model_uuid:
             return "Error: No LLM model specified. Please configure a model in the pipeline settings."
 
+        # Log the model being used
+        logger.info(f"===== 实际使用的 LLM 模型 UUID: {llm_model_uuid} =====")
+
+        # Initialize registry if not provided
+        logger.info(f"DEBUG: registry={registry}, plugin={plugin}")
+        if registry is None and plugin:
+            logger.info("DEBUG: 正在初始化 registry...")
+            registry = await self._get_tool_registry(plugin)
+            logger.info(f"DEBUG: 初始化完成，registry={registry}")
+
         # Get rate limit from config
         config = plugin.get_config() if plugin else {}
         rate_limit_seconds = float(config.get('planner_rate_limit_seconds', 1))
 
         # Get tools description from registry
-        tools_description = registry.get_tools_description() if registry else ""
+        tools_description = ""
+        if registry:
+            try:
+                tools_description = registry.get_tools_description()
+                tool_count = len(registry.get_all_tools())
+                logger.info(f"工具注册表: {tool_count} 个工具")
+                logger.info(f"tools_description 长度: {len(tools_description)}")
+                if tools_description:
+                    logger.info(f"tools_description 前500字符: {tools_description[:500]}")
+                else:
+                    logger.warning("tools_description 为空！列出所有工具名称:")
+                    for t in registry.get_all_tools():
+                        logger.warning(f"  - {t.name}")
+            except Exception as e:
+                logger.error(f"获取 tools_description 失败: {e}")
+        else:
+            logger.error("registry 为 None!")
 
         # Build initial messages - start with system prompt
         messages = [
@@ -299,34 +331,14 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
             ),
         ]
 
-        # Try to get conversation history from session
-        if session and hasattr(session, 'conversations') and session.conversations:
-            try:
-                # Get the current (last) conversation
-                current_conversation = session.conversations[-1]
-                if hasattr(current_conversation, 'messages') and current_conversation.messages:
-                    # Add historical messages (skip the first one if it's the system prompt)
-                    for msg in current_conversation.messages:
-                        if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                            # Skip if it's a duplicate of our system prompt
-                            if msg.role == 'system' and 'You are a task planning assistant' in str(msg.content):
-                                continue
-                            # Convert to our message format
-                            messages.append(provider_message.Message(
-                                role=msg.role,
-                                content=msg.content if isinstance(msg.content, str) else str(msg.content),
-                                name=getattr(msg, 'name', None),
-                                tool_calls=getattr(msg, 'tool_calls', None),
-                                tool_call_id=getattr(msg, 'tool_call_id', None)
-                            ))
-                    logger.debug(f"Loaded {len(messages)} messages from session history")
-            except Exception as e:
-                logger.debug(f"Failed to load session history: {e}")
+        # Skip loading session history to avoid accumulating duplicate messages
+        # This prevents the bug where previous user messages are repeated in each iteration
 
-        # Add the current task
+        # Add the current task with tools description
+        user_message = f"{task}\n\nIMPORTANT: Use a tool to complete this task. Available tools:\n{tools_description}\n\nRemember: Respond with JSON format only: {{\"tool\": \"name\", \"arguments\": {{...}}}}"
         messages.append(provider_message.Message(
             role="user",
-            content=task
+            content=user_message
         ))
 
         # ReAct loop
@@ -342,13 +354,6 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                     return "Task has been stopped by user."
 
-                # Add tools description to the last user message
-                # Always include tools description to remind LLM of available tools
-                messages[-1] = provider_message.Message(
-                    role="user",
-                    content=f"{task}\n\nIMPORTANT: Use a tool to complete this task. Available tools:\n{tools_description}\n\nRemember: Respond with JSON format only: {{\"tool\": \"name\", \"arguments\": {{...}}}}"
-                )
-
                 # Rate limiting: wait if necessary
                 current_time = time.time()
                 time_since_last_call = current_time - PlannerTool._last_llm_call_time
@@ -361,6 +366,16 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 # Increment LLM call count and log the start of LLM invocation
                 PlannerTool._llm_call_count += 1
                 logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次)")
+
+                # Log the messages being sent to LLM (for debugging)
+                logger.info(f"===== LLM 消息内容 (第 {PlannerTool._llm_call_count} 次) =====")
+                for i, msg in enumerate(messages):
+                    role = msg.role
+                    content_preview = str(msg.content)[:500] if msg.content else "(无内容)"
+                    if len(str(msg.content)) > 500:
+                        content_preview += "..."
+                    logger.info(f"[消息 {i}] role={role}: {content_preview}")
+                logger.info("=" * 50)
 
                 response = await plugin.invoke_llm(
                     llm_model_uuid=llm_model_uuid,
@@ -441,6 +456,8 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         if iteration == max_iterations - 1:
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task reached maximum iterations ({max_iterations}). Progress so far:\n{result}"
+                        # Continue to next iteration - tool result has been added to messages
+                        logger.info(f"工具执行完成，进入下一次迭代 (iteration={iteration+1})")
                 else:
                     if response.content:
                         content_str = str(response.content)
@@ -455,7 +472,10 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                             return self._generate_skill_suggestion(skill_needed)
 
             except Exception as e:
+                import traceback
                 error_msg = str(e)
+                logger.error(f"执行异常: {error_msg}")
+                logger.error(traceback.format_exc())
                 # Check for specific error types
                 if "429" in error_msg or "rate limit" in error_msg.lower():
                     return f"""错误: LLM API 请求过于频繁或余额不足。

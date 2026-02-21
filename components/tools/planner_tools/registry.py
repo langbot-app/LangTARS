@@ -124,10 +124,20 @@ class ToolRegistry:
         if self._initialized:
             return
 
+        import logging
+        logger = logging.getLogger(__name__)
+
         # Register built-in tools
+        logger.info(f"开始初始化工具注册表，BUILTIN_TOOLS 数量: {len(BUILTIN_TOOLS)}")
         for tool_class in BUILTIN_TOOLS:
-            tool = tool_class()
-            self._builtin_tools[tool.name] = tool
+            try:
+                tool = tool_class()
+                self._builtin_tools[tool.name] = tool
+                logger.debug(f"注册工具: {tool.name}")
+            except Exception as e:
+                logger.error(f"注册工具失败 {tool_class}: {e}")
+
+        logger.info(f"注册了 {len(self._builtin_tools)} 个内置工具")
 
         # Initialize dynamic tool loader
         self._dynamic_loader = DynamicToolLoader(self.plugin)
@@ -141,6 +151,7 @@ class ToolRegistry:
         await self._register_skills()
 
         self._initialized = True
+        logger.info(f"工具注册表初始化完成，共 {len(self._builtin_tools)} 个工具")
 
     async def _register_skills(self):
         """Register loaded skills as tools"""

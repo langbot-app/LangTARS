@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.api.definition.components.command.command import Command, Subcommand
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext, CommandReturn
 from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain
+
+logger = logging.getLogger(__name__)
 
 
 class LangTARS(Command):
@@ -71,7 +74,14 @@ class LangTARS(Command):
             subcommand=LanTARSCommand.close,
             help="Close an application",
             usage="/tars close <app_name> [-f]",
-            aliases=["quit", "stop"],
+            aliases=["quit"],
+        )
+
+        self.registered_subcommands["stop"] = Subcommand(
+            subcommand=LanTARSCommand.stop,
+            help="Stop the current running task",
+            usage="/tars stop",
+            aliases=["pause", "cancel"],
         )
 
         self.registered_subcommands["top"] = Subcommand(
@@ -309,6 +319,18 @@ class LanTARSCommand:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
+    async def stop(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Handle task stopping."""
+        from components.tools.planner import PlannerTool
+
+        if PlannerTool.is_task_stopped():
+            yield CommandReturn(text="Task is already stopped.")
+            return
+
+        PlannerTool.stop_task()
+        yield CommandReturn(text="Task has been stopped.")
+
+    @staticmethod
     async def top(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app listing."""
         from main import LangTARS
@@ -444,13 +466,17 @@ Go to Pipelines → Configure → Select LLM Model
 
             # If user configured a specific model, validate it exists
             if configured_model_uuid:
+                logger.info(f"[langtars.py] 配置的模型 UUID: {configured_model_uuid}")
+                logger.info(f"[langtars.py] 可用模型列表: {models}")
                 # Find the configured model
                 for model in models:
                     if isinstance(model, dict) and model.get('uuid') == configured_model_uuid:
                         llm_model_uuid = configured_model_uuid
+                        logger.info(f"[langtars.py] 找到配置的模型，使用: {configured_model_uuid}")
                         break
                 else:
                     # Model not found, fall back to first available
+                    logger.warning(f"[langtars.py] 配置的模型 '{configured_model_uuid}' 未在可用模型列表中找到，fallback 到第一个模型")
                     llm_model_uuid = models[0].get('uuid', '') if isinstance(models[0], dict) else models[0]
             else:
                 # No model configured, use first available
