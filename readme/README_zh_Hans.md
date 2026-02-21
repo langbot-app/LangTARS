@@ -7,7 +7,9 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a>&nbsp; • &nbsp;
+  <a href="../README.md">English</a>&nbsp; • &nbsp;
+  <a href="README_zh_Hant.md">繁體中文</a>&nbsp; • &nbsp;
+  <a href="README_ja_JP.md">日本語</a>&nbsp; • &nbsp;
   <a href="https://github.com/langbot-app/LangTARS">GitHub</a>
 </p>
 
@@ -35,6 +37,19 @@ LangTARS 采用不同的方式：
 2. 配置您偏好的 LLM 模型用于任务规划
 3. 开始通过 IM 消息控制您的 Mac！
 
+## 首次设置 - Mac 权限
+
+首次使用前，需要授予一些权限：
+
+### AppleScript  automation 权限
+- 打开 **系统偏好设置** > **隐私与安全性** > **辅助功能**
+- 点击左下角 🔒 解锁
+- 添加 **Terminal** 或你的聊天应用 (如 WeChat, Telegram 等)
+
+### Safari JavaScript 权限 (可选)
+- 打开 **Safari** > **设置** > **高级**
+- 勾选 **允许 Apple Events 中的 JavaScript**
+
 ## 主要命令
 
 ### `!tars auto` — 自主任务规划
@@ -46,6 +61,16 @@ LangTARS 采用不同的方式：
 !tars auto 打开 Safari 并访问 github
 !tars auto 帮我整理桌面上的文件
 ```
+
+### 浏览器控制
+
+LangTARS 支持三种浏览器控制方式：
+
+| 命令示例 | 浏览器 | 说明 |
+|----------|--------|------|
+| `!tars auto 访问 github.com` | Playwright (Chromium) | 默认方式，无需额外权限 |
+| `!tars auto 打开 Safari 并访问 github` | Safari 浏览器 | 使用真实 Safari，需要 AppleScript 权限 |
+| `!tars auto 打开 Chrome 并访问 github` | Chrome 浏览器 | 使用真实 Chrome，需要 AppleScript 权限 |
 
 AI 将：
 1. 理解您的请求

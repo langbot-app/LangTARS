@@ -5,10 +5,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import platform
 from pathlib import Path
 from typing import Any
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 from langbot_plugin.api.definition.components.command.command import Command, Subcommand
 from langbot_plugin.api.definition.plugin import BasePlugin
@@ -158,7 +166,7 @@ class LangTARS(Command, BasePlugin):
             import json
             config_file.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
-            print(f"[DEBUG] Failed to save config: {e}")
+            logger.debug(f"Failed to save config: {e}")
 
     def set_config(self, config: dict[str, Any]) -> None:
         """Set and persist the config."""
@@ -839,6 +847,65 @@ Examples:
                 return {'success': False, 'error': result.get('error', 'Unknown error'), 'files': []}
         except Exception as e:
             return {'success': False, 'error': str(e), 'files': []}
+
+    # ========== Permission Check ==========
+
+    async def check_permissions(self) -> dict[str, Any]:
+        """Check if required permissions are granted for Mac control."""
+        issues = []
+
+        # Check AppleScript permission (automation)
+        try:
+            result = await self.run_shell(
+                'osascript -e \'tell application "System Events" to keystroke "test"\'',
+                timeout=5
+            )
+            if not result['success']:
+                if 'not allowed' in result.get('stderr', '').lower() or 'permission' in result.get('stderr', '').lower():
+                    issues.append("AppleScript  automation permission - 需要在系统偏好设置中授权")
+        except:
+            pass
+
+        # Check if Accessibility permission might be needed
+        # This is harder to check programmatically, so we just warn
+        issues.append("辅助功能权限 - 如果 UI 自动化不工作，需要在系统偏好设置 > 隐私与安全性 > 辅助功能 中授权")
+
+        if issues:
+            return {
+                'success': False,
+                'permissions_needed': issues,
+                'message': "需要 Mac 系统权限，请查看下方说明"
+            }
+        return {'success': True, 'message': '权限检查通过'}
+
+    def get_permission_instructions(self) -> str:
+        """Get instructions for granting permissions."""
+        return """
+## Mac 权限设置说明
+
+为了正常使用 LangTARS 控制你的 Mac，需要授予以下权限：
+
+### 1. AppleScript  automation 权限
+- 打开 **系统偏好设置** > **隐私与安全性** > **辅助功能**
+- 点击左下角 🔒 解锁
+- 添加 **Terminal** 或你使用的聊天应用
+- 或者当首次运行时会弹出提示，点击"允许"
+
+### 2. 辅助功能权限 (可选，用于更高级的 UI 自动化)
+- 打开 **系统偏好设置** > **隐私与安全性** > **辅助功能**
+- 点击左下角 🔒 解锁
+- 添加 **Safari** (如果使用浏览器自动化)
+
+### 3. Safari JavaScript 权限 (可选)
+- 打开 **Safari** > **设置** > **高级**
+- 勾选 **允许 Apple Events 中的 JavaScript**
+- 这样可以获取网页内容
+
+如果需要手动授权，请运行以下命令打开系统偏好设置：
+```
+open /System/Library/PreferencePanes/Security.prefPane
+```
+"""
 
     async def run_applescript(self, script: str) -> dict[str, Any]:
         """Execute an AppleScript script."""

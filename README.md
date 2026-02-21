@@ -7,7 +7,9 @@
 </p>
 
 <p align="center">
-  <a href="README_zh.md">中文</a>&nbsp; • &nbsp;
+  <a href="readme/README_zh_Hans.md">简体中文</a>&nbsp; • &nbsp;
+  <a href="readme/README_zh_Hant.md">繁體中文</a>&nbsp; • &nbsp;
+  <a href="readme/README_ja_JP.md">日本語</a>&nbsp; • &nbsp;
   <a href="https://github.com/langbot-app/LangTARS">GitHub</a>
 </p>
 

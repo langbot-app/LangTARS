@@ -5,8 +5,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from typing import Any
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.entities.builtin.provider import session as provider_session
@@ -25,12 +33,72 @@ class PlannerTool(Tool):
     # Class variable for rate limiting
     _last_llm_call_time: float = 0.0
 
+    # Class variable for LLM call count tracking
+    _llm_call_count: int = 0
+
     # Class variable for task pause/stop control
     _task_stopped: bool = False
     _current_task_info: dict = {}
 
     # Tool registry instance
     _tool_registry: ToolRegistry | None = None
+
+    # File-based stop flag for cross-process communication
+    _stop_file_path: str = "/tmp/langtars_stop"
+
+    @classmethod
+    def _get_stop_file_path(cls) -> str:
+        """Get the path to the stop flag file"""
+        return cls._stop_file_path
+
+    @classmethod
+    def _is_stopped_from_file(cls) -> bool:
+        """Check if stop flag file exists (for cross-process stop)"""
+        import os
+        return os.path.exists(cls._stop_file_path)
+
+    @classmethod
+    def _clear_stop_file(cls) -> None:
+        """Clear the stop flag file"""
+        import os
+        try:
+            if os.path.exists(cls._stop_file_path):
+                os.remove(cls._stop_file_path)
+        except:
+            pass
+
+    @classmethod
+    def stop_task(cls, task_id: str = "default") -> bool:
+        """Stop the current running task - writes to file for cross-process communication"""
+        # Set class variable
+        cls._task_stopped = True
+        # Also write to file for cross-process communication
+        try:
+            with open(cls._stop_file_path, 'w') as f:
+                f.write(f"stopped:{task_id}")
+        except:
+            pass
+        return True
+
+    @classmethod
+    def is_task_stopped(cls) -> bool:
+        """Check if the current task has been stopped (checks both class var and file)"""
+        # First check class variable
+        if cls._task_stopped:
+            return True
+        # Also check file for cross-process communication
+        if cls._is_stopped_from_file():
+            cls._task_stopped = True
+            return True
+        return False
+
+    @classmethod
+    def reset_task_state(cls) -> None:
+        """Reset task state for a new task"""
+        cls._task_stopped = False
+        cls._current_task_info = {}
+        cls._llm_call_count = 0
+        cls._clear_stop_file()
 
     SYSTEM_PROMPT = """You are a task planning assistant. Your job is to help users accomplish tasks on their Mac by intelligently calling tools.
 
@@ -97,23 +165,6 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 PlannerTool._tool_registry = ToolRegistry(plugin)
                 await PlannerTool._tool_registry.initialize()
         return PlannerTool._tool_registry
-
-    @classmethod
-    def stop_task(cls, task_id: str = "default") -> bool:
-        """Stop the current running task"""
-        PlannerTool._task_stopped = True
-        return True
-
-    @classmethod
-    def reset_task_state(cls) -> None:
-        """Reset task state for a new task"""
-        PlannerTool._task_stopped = False
-        PlannerTool._current_task_info = {}
-
-    @classmethod
-    def is_task_stopped(cls) -> bool:
-        """Check if the current task has been stopped"""
-        return cls._task_stopped
 
     @classmethod
     def set_current_task(cls, task_id: str, task_description: str) -> None:
@@ -187,9 +238,9 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
             try:
                 dynamic_tools = await registry.load_dynamic_tools()
                 if dynamic_tools:
-                    print(f"[DEBUG] Loaded {len(dynamic_tools)} dynamic tools")
+                    logger.debug(f"Loaded {len(dynamic_tools)} dynamic tools")
             except Exception as e:
-                print(f"[DEBUG] Failed to load dynamic tools: {e}")
+                logger.debug(f"Failed to load dynamic tools: {e}")
 
         # Import main module to get helper methods
         from main import LangTARS
@@ -238,25 +289,57 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         # Get tools description from registry
         tools_description = registry.get_tools_description() if registry else ""
 
-        # Build initial messages
+        # Build initial messages - start with system prompt
         messages = [
             provider_message.Message(
                 role="system",
                 content=self.SYSTEM_PROMPT
             ),
-            provider_message.Message(
-                role="user",
-                content=task
-            )
         ]
+
+        # Try to get conversation history from session
+        if session and hasattr(session, 'conversations') and session.conversations:
+            try:
+                # Get the current (last) conversation
+                current_conversation = session.conversations[-1]
+                if hasattr(current_conversation, 'messages') and current_conversation.messages:
+                    # Add historical messages (skip the first one if it's the system prompt)
+                    for msg in current_conversation.messages:
+                        if hasattr(msg, 'role') and hasattr(msg, 'content'):
+                            # Skip if it's a duplicate of our system prompt
+                            if msg.role == 'system' and 'You are a task planning assistant' in str(msg.content):
+                                continue
+                            # Convert to our message format
+                            messages.append(provider_message.Message(
+                                role=msg.role,
+                                content=msg.content if isinstance(msg.content, str) else str(msg.content),
+                                name=getattr(msg, 'name', None),
+                                tool_calls=getattr(msg, 'tool_calls', None),
+                                tool_call_id=getattr(msg, 'tool_call_id', None)
+                            ))
+                    logger.debug(f"Loaded {len(messages)} messages from session history")
+            except Exception as e:
+                logger.debug(f"Failed to load session history: {e}")
+
+        # Add the current task
+        messages.append(provider_message.Message(
+            role="user",
+            content=task
+        ))
 
         # ReAct loop
         for iteration in range(max_iterations):
             # Check if task has been stopped
             if PlannerTool._task_stopped:
+                logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                 return "Task has been stopped by user."
 
             try:
+                # Check if stopped before LLM call
+                if PlannerTool._task_stopped:
+                    logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                    return "Task has been stopped by user."
+
                 # Add tools description to the last user message
                 # Always include tools description to remind LLM of available tools
                 messages[-1] = provider_message.Message(
@@ -264,26 +347,18 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     content=f"{task}\n\nIMPORTANT: Use a tool to complete this task. Available tools:\n{tools_description}\n\nRemember: Respond with JSON format only: {{\"tool\": \"name\", \"arguments\": {{...}}}}"
                 )
 
-                # Debug: print model info before invoking LLM
-                print(f"[DEBUG] Invoking LLM with model_uuid: {llm_model_uuid}")
-                try:
-                    models = await plugin.get_llm_models()
-                    for m in models:
-                        if isinstance(m, dict) and m.get('uuid') == llm_model_uuid:
-                            provider_name = m.get('provider', {}).get('name', 'unknown')
-                            print(f"[DEBUG] Provider: {provider_name}")
-                            break
-                except Exception as e:
-                    print(f"[DEBUG] Failed to get provider info: {e}")
-
                 # Rate limiting: wait if necessary
                 current_time = time.time()
                 time_since_last_call = current_time - PlannerTool._last_llm_call_time
                 if time_since_last_call < rate_limit_seconds:
                     wait_time = rate_limit_seconds - time_since_last_call
-                    print(f"[DEBUG] Rate limiting: waiting {wait_time:.2f}s before LLM call")
+                    logger.debug(f"Rate limiting: waiting {wait_time:.2f}s before LLM call")
                     await asyncio.sleep(wait_time)
                 PlannerTool._last_llm_call_time = time.time()
+
+                # Increment LLM call count and log the start of LLM invocation
+                PlannerTool._llm_call_count += 1
+                logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次)")
 
                 response = await plugin.invoke_llm(
                     llm_model_uuid=llm_model_uuid,
@@ -295,11 +370,14 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 if response.content and not response.tool_calls:
                     content_str = str(response.content)
                     if content_str.strip().upper().startswith("DONE:"):
-                        return content_str[5:].strip()
+                        result = content_str[5:].strip()
+                        logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                        return result
 
                     # Check if LLM indicates it needs a skill
                     if content_str.strip().upper().startswith("NEED_SKILL:"):
                         skill_needed = content_str[11:].strip()
+                        logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                         return self._generate_skill_suggestion(skill_needed)
 
                     # Try to parse JSON tool call from content
@@ -308,6 +386,12 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         result = await self._execute_tool(
                             tool_call, helper_plugin or plugin, registry
                         )
+
+                        # Check if stopped after tool execution
+                        if PlannerTool._task_stopped:
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                            return f"Task stopped by user. Last result:\n{result}"
+
                         messages.append(
                             provider_message.Message(
                                 role="tool",
@@ -316,6 +400,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                             )
                         )
                         if iteration == max_iterations - 1:
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task reached maximum iterations ({max_iterations}). Progress so far:\n{result}"
                         continue
 
@@ -329,6 +414,12 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         result = await self._execute_tool(
                             tool_call, helper_plugin or plugin, registry
                         )
+
+                        # Check if stopped after tool execution
+                        if PlannerTool._task_stopped:
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                            return f"Task stopped by user. Last result:\n{result}"
+
                         messages.append(
                             provider_message.Message(
                                 role="tool",
@@ -337,15 +428,19 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                             )
                         )
                         if iteration == max_iterations - 1:
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task reached maximum iterations ({max_iterations}). Progress so far:\n{result}"
                 else:
                     if response.content:
                         content_str = str(response.content)
                         if content_str.strip().upper().startswith("DONE:"):
-                            return content_str[5:].strip()
+                            result = content_str[5:].strip()
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                            return result
                         # Check if LLM indicates it needs a skill
                         if content_str.strip().upper().startswith("NEED_SKILL:"):
                             skill_needed = content_str[11:].strip()
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return self._generate_skill_suggestion(skill_needed)
 
             except Exception as e:
@@ -361,8 +456,10 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 可以稍后再试，或等待几秒钟后重试。
 
 错误详情: {error_msg[:200]}"""
+                logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                 return f"Error during execution: {error_msg}"
 
+        logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
         return f"Task reached maximum iterations ({max_iterations}) without completion."
 
     def _generate_skill_suggestion(self, skill_needed: str) -> str:
@@ -399,7 +496,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 请再次发送任务，我将使用新安装的技能来完成你的请求。
 """
             except Exception as e:
-                print(f"[DEBUG] Failed to search skills: {e}")
+                logger.debug(f"Failed to search skills: {e}")
 
         # If no skills found or auto-install failed, provide manual instructions
         return f"""抱歉，我无法完成这个任务，因为缺少必要的工具/技能。
@@ -440,7 +537,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
             loop.close()
             return result
         except Exception as e:
-            print(f"[DEBUG] Auto-install failed: {e}")
+            logger.debug(f"Auto-install failed: {e}")
             return {"success": False, "error": str(e)}
 
     def _parse_tool_call_from_content(self, content: str):
@@ -499,21 +596,21 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         if registry:
             tool = registry.get_tool(tool_name)
             if tool:
-                print(f"[DEBUG] Found tool '{tool_name}' in registry: {type(tool).__name__}")
+                logger.debug(f"Found tool '{tool_name}' in registry: {type(tool).__name__}")
             else:
-                print(f"[DEBUG] Tool '{tool_name}' not found in registry")
+                logger.debug(f"Tool '{tool_name}' not found in registry")
 
         # Execute the tool
         if isinstance(tool, BasePlannerTool):
             try:
-                print(f"[DEBUG] Executing tool '{tool_name}' with args: {arguments}")
+                logger.debug(f"Executing tool '{tool_name}' with args: {arguments}")
                 result = await tool.execute(helper_plugin, arguments)
-                print(f"[DEBUG] Tool result: {result}")
+                logger.debug(f"Tool result: {result}")
                 return result
             except Exception as e:
                 import traceback
                 error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                print(f"[DEBUG] {error_msg}")
+                logger.debug(error_msg)
                 traceback.print_exc()
                 return {"error": error_msg}
 
