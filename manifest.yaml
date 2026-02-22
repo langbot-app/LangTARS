@@ -6,8 +6,8 @@ metadata:
   repository: 'https://github.com/langbot-app/LangTARS'
   version: 0.1.0
   description:
-    en_US: 'Native Claw-like Plugin - Control your Mac through IM messages using autonomous AI planning (inspired by ReAct, OpenClaw-style, like TARS from Interstellar)'
-    zh_Hans: '原生类 Claw 插件 - 通过 IM 消息使用自主 AI 规划能力控制您的 Mac（参考ReAct 理念，类 OpenClaw 设计，如《星际穿越》中的塔斯）'
+    en_US: '(Testing) Native Claw-like Plugin - Control your Mac through IM messages using autonomous AI planning (inspired by ReAct, OpenClaw-style, like TARS from Interstellar)'
+    zh_Hans: '(测试中) 原生类 Claw 插件 - 通过 IM 消息使用自主 AI 规划能力控制您的 Mac（参考ReAct 理念，类 OpenClaw 设计，如《星际穿越》中的塔斯）'
   label:
     en_US: LangTARS
     zh_Hans: LangTARS

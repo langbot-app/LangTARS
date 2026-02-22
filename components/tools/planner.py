@@ -143,7 +143,7 @@ Response: {"tool": "safari_get_content", "arguments": {}}
 DONE: GitHub page content: [summary of content]
 
 User: "Open Chrome and search for AI news"
-Response: {"tool": "chrome_navigate", "arguments": {"url": "https://www.google.com/search?q=AI+news"}}
+Response: {"tool": "chrome_navigate", "arguments": {"url": "https://www.bing.com/search?q=AI+news"}}
 # Tool result: {"success": true, ...}
 # Then respond with:
 DONE: Opened Chrome and searched for AI news
@@ -153,8 +153,18 @@ Response: {"tool": "browser_navigate", "arguments": {"url": "https://example.com
 # After receiving success result, respond with:
 DONE: Opened the website
 
-User: "What's the weather?"
-Response: {"tool": "fetch_url", "arguments": {"url": "https://weather.com"}}
+User: "What's the weather in Beijing?"
+Response: {"tool": "browser_navigate", "arguments": {"url": "https://www.bing.com/search?q=北京天气"}}
+# Tool result: {"success": true, ...}
+Response: WORKING: Got search results, now clicking first result to get actual weather...
+Response: {"tool": "browser_click", "arguments": {"selector": ".b_adClick"}}
+# Tool result: {"success": true, ...}
+# IMPORTANT: After clicking, MUST immediately get content!
+Response: WORKING: Clicked result, now extracting weather data...
+Response: {"tool": "browser_get_content", "arguments": {}}
+# Tool result: {"success": true, "content": "北京天气预报: 晴, 15°C, 湿度45%..."}
+# Then respond with:
+DONE: 北京今天天气晴朗，气温15°C，湿度45%。
 
 User: "Task complete, show result"
 Response: DONE: Successfully completed the task...
@@ -176,9 +186,18 @@ Response: DONE: Successfully completed the task...
 6. Use chrome_* tools when user specifically mentions Chrome
 7. Use shell for terminal commands
 8. Use fetch_url to get web page content
-9. After a tool returns success ({"success": true}), IMMEDIATELY respond with "DONE: Your summary" - do NOT call the same tool again!
+9. After a tool returns success ({"success": true}):
+   - If you already have the FINAL answer → respond with "DONE: Your summary"
+   - If you need MORE information from the page → respond with "WORKING: [what you're doing]" then call more tools
+   - For example, after navigating to a weather page, use browser_get_content to extract actual weather data
 10. If user asks for content/summary, fetch it first THEN return DONE with the summary
 11. NEVER respond with natural language - always use JSON or DONE: format
+12. When navigating to a search results page (e.g., Bing search), you MUST either:
+    - Click on a relevant result to go to the actual page, then get its content
+    - Or use browser_get_content to extract information from the search results
+    - DON'T just return DONE after seeing search results - you need to get the actual content!
+13. IMPORTANT - Click LIMIT: After clicking a search result link, you MUST immediately call browser_get_content to extract the actual content. NEVER click more than once - if the first click doesn't work, use browser_get_content on the current page instead.
+14. Use browser_get_content to get the actual text/content from the page after any navigation or click. This is how you extract useful information!
 
 If no tool can accomplish the user's request, then respond with NEED_SKILL: and describe what you need.
 """
@@ -428,21 +447,14 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task stopped by user. Last result:\n{result}"
 
-                        messages.append(
-                            provider_message.Message(
-                                role="tool",
-                                content=json.dumps(result),
-                                tool_call_id=f"call_{iteration}"
-                            )
-                        )
-
-                        # Add a hint to prompt LLM to continue if task is not complete
+                        # For JSON format responses (not tool_calls), send result as user message
+                        # instead of tool_result to avoid Bedrock API tool_use_id mismatch error
                         hint = f"""
-上一个工具执行结果：{json.dumps(result)[:500]}
+工具执行结果：{json.dumps(result)[:500]}
 
 请判断任务是否已完成：
 - 用户的原始任务是：{task}
-- 如果已经获取到页面内容 → 立即返回 DONE: 总结内容
+- 如果已经获取到最终答案 → 返回 DONE: 答案
 - 如果还需要更多步骤 → 返回 WORKING: 正在做什么
 - 如果需要调用工具 → 返回 JSON 格式
 
@@ -617,23 +629,6 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 
 需要的技能: {skill_needed}{skill_info}
 
-要解决这个问题，你可以:
-
-1. 安装 ClawHub Skills:
-   - 在 ~/.claude/skills/ 目录下添加相应的 skill
-   - 或者从 GitHub 安装，例如:
-     git clone https://github.com/langbot-app/clawhub-weather.git ~/.claude/skills/weather
-
-2. 配置 MCP 服务器:
-   - 在 LangBot 设置中添加支持该功能的 MCP 服务器
-
-3. 手动执行:
-   - 如果你有其他方式完成这个任务，可以直接告诉我
-
-常见技能的 GitHub 仓库:
-- 天气: https://github.com/langbot-app/clawhub-weather
-- 邮件: https://github.com/langbot-app/clawhub-email
-- 等等...
 """
 
     def _try_auto_install(self, skill_name: str) -> dict[str, Any]:
@@ -834,21 +829,14 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task stopped by user. Last result:\n{result}"
 
-                        messages.append(
-                            provider_message.Message(
-                                role="tool",
-                                content=json.dumps(result),
-                                tool_call_id=f"call_retry_{iteration}"
-                            )
-                        )
-
-                        # Add hint
+                        # For JSON format responses (not tool_calls), send result as user message
+                        # instead of tool_result to avoid Bedrock API tool_use_id mismatch error
                         hint = f"""
-上一个工具执行结果：{json.dumps(result)[:500]}
+工具执行结果：{json.dumps(result)[:500]}
 
 请判断任务是否已完成：
 - 用户的原始任务是：{task}
-- 如果已经获取到页面内容 → 立即返回 DONE: 总结内容
+- 如果已经获取到最终答案 → 返回 DONE: 答案
 - 如果还需要更多步骤 → 返回 WORKING: 正在做什么
 - 如果需要调用工具 → 返回 JSON 格式
 

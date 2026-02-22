@@ -16,7 +16,7 @@ class BrowserNavigateTool(BasePlannerTool):
 
     @property
     def description(self) -> str:
-        return "Navigate to a URL in the browser. Use this to open websites."
+        return "Navigate to a URL in the browser. Use this to open websites. When searching the web, use https://www.bing.com instead of Google."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -25,7 +25,7 @@ class BrowserNavigateTool(BasePlannerTool):
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to navigate to (e.g., 'https://www.google.com')"
+                    "description": "The URL to navigate to (e.g., 'https://www.bing.com' or 'https://www.bing.com/search?q=your+search+terms')"
                 }
             },
             "required": ["url"]

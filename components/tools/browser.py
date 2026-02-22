@@ -144,7 +144,8 @@ class BrowserManager:
                 return init_result
 
         try:
-            response = await self._page.goto(url, timeout=self.timeout, wait_until='domcontentloaded')
+            # Wait for network idle to ensure dynamic content is loaded
+            response = await self._page.goto(url, timeout=self.timeout, wait_until='networkidle')
             return {
                 'success': True,
                 'url': self._page.url,
@@ -152,7 +153,19 @@ class BrowserManager:
                 'status': response.status if response else None
             }
         except Exception as e:
-            return {'success': False, 'error': str(e)}
+            # Fallback to domcontentloaded if networkidle fails
+            try:
+                response = await self._page.goto(url, timeout=self.timeout, wait_until='domcontentloaded')
+                # Wait a bit for dynamic content
+                await asyncio.sleep(2)
+                return {
+                    'success': True,
+                    'url': self._page.url,
+                    'title': await self._page.title(),
+                    'status': response.status if response else None
+                }
+            except Exception as e2:
+                return {'success': False, 'error': str(e2)}
 
     async def click(self, selector: str) -> dict[str, Any]:
         """Click an element"""
