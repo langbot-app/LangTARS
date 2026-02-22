@@ -13,6 +13,8 @@
   <a href="https://github.com/langbot-app/LangTARS">GitHub</a>
 </p>
 
+> ⚠️ **Note**: Features are still under active development. If you encounter any bugs, please submit an [issue](https://github.com/langbot-app/LangTARS/issues).
+
 ---
 
 ## What is LangTARS?
@@ -44,10 +46,21 @@ LangTARS takes a different approach:
 This is the **primary command** that makes LangTARS special. Simply describe what you want to do, and the AI will autonomously plan and execute the task using available tools.
 
 ```
-!tars auto 帮我下载一个文件到桌面
-!tars auto open Safari and navigate to github
-!tars auto 帮我整理桌面上的文件
+!tars auto Open Safari, visit langbot.app, scrape elements and tell me
+!tars auto Create a new note with title and content "hello"
+!tars auto Help me organize the files on my desktop
+~~!tars auto Cook me some dishes.~~
 ```
+
+### Browser Control
+
+LangTARS supports three browser control methods:
+
+| Command Example | Browser | Description |
+|----------|---------|------|
+| `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
+| `!tars auto Open Safari and visit github` | Safari Browser | Uses real Safari, requires AppleScript permission |
+| `!tars auto Open Chrome and visit github` | Chrome Browser | Uses real Chrome, requires AppleScript permission |
 
 The AI will:
 1. Understand your request

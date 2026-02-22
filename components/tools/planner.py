@@ -1,4 +1,3 @@
-# LangTARS Planner Tool
 # ReAct loop for autonomous task planning and execution
 
 from __future__ import annotations
@@ -117,6 +116,9 @@ When you need to execute a tool, you MUST respond with ONLY a JSON object in thi
 When the task is COMPLETED, respond with ONLY:
 DONE: Your summary here
 
+When the task is in progress but not yet complete, respond with ONLY:
+WORKING: Description of what you are currently doing (e.g., "Fetching page content...", "Waiting for page to load...")
+
 When you need a skill that doesn't exist, respond with ONLY:
 NEED_SKILL: Description of what capability you need
 
@@ -134,6 +136,7 @@ DONE: Opened github.com in Safari
 User: "Open Safari, navigate to github.com and get content"
 Response: {"tool": "safari_navigate", "arguments": {"url": "https://github.com"}}
 # Tool result: {"success": true, ...}
+Response: WORKING: Navigated to github.com, now fetching page content...
 Response: {"tool": "safari_get_content", "arguments": {}}
 # Tool result: {"success": true, "stdout": "Title: GitHub, ...", ...}
 # Then respond with:
@@ -329,9 +332,9 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 content=self.SYSTEM_PROMPT
             ),
         ]
-
-        # Skip loading session history to avoid accumulating duplicate messages
-        # This prevents the bug where previous user messages are repeated in each iteration
+        # For new task, don't load any session history - start fresh
+        # This ensures each new auto command is independent and not affected by previous tasks
+        logger.debug("Starting new task - not loading session history")
 
         # Add the current task with tools description
         user_message = f"{task}\n\nIMPORTANT: Use a tool to complete this task. Available tools:\n{tools_description}\n\nRemember: Respond with JSON format only: {{\"tool\": \"name\", \"arguments\": {{...}}}}"
@@ -364,7 +367,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 
                 # Increment LLM call count
                 PlannerTool._llm_call_count += 1
-                logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次)")
+                logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次), task: {task[:50]}...")
 
                 response = await plugin.invoke_llm(
                     llm_model_uuid=llm_model_uuid,
@@ -383,8 +386,35 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     # Check if LLM indicates it needs a skill
                     if content_str.strip().upper().startswith("NEED_SKILL:"):
                         skill_needed = content_str[11:].strip()
+                        logger.info(f"需要技能: {skill_needed}")
+
+                        # Try to auto-install skill and retry
+                        retry_result = await self._try_auto_install_and_retry(
+                            skill_needed, messages, task, helper_plugin, registry, plugin
+                        )
+                        if retry_result is not None:
+                            # Successfully installed skill and retried, return the result
+                            logger.info(f"Skill自动安装并重试成功，共调用 {PlannerTool._llm_call_count} 次")
+                            return retry_result
+
+                        # If auto-install failed, return suggestion message
                         logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                         return self._generate_skill_suggestion(skill_needed)
+
+                    # Check if LLM indicates task is in progress
+                    if content_str.strip().upper().startswith("WORKING:"):
+                        working_msg = content_str[8:].strip()
+                        logger.info(f"LLM 正在工作中: {working_msg}")
+                        # Reset invalid response count since this is a valid state
+                        PlannerTool._invalid_response_count = 0
+                        # Add as user message and continue to next iteration
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=f"继续执行任务。{working_msg}"
+                            )
+                        )
+                        continue
 
                     # Try to parse JSON tool call from content
                     tool_call = self._parse_tool_call_from_content(content_str)
@@ -405,6 +435,25 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                                 tool_call_id=f"call_{iteration}"
                             )
                         )
+
+                        # Add a hint to prompt LLM to continue if task is not complete
+                        hint = f"""
+上一个工具执行结果：{json.dumps(result)[:500]}
+
+请判断任务是否已完成：
+- 用户的原始任务是：{task}
+- 如果已经获取到页面内容 → 立即返回 DONE: 总结内容
+- 如果还需要更多步骤 → 返回 WORKING: 正在做什么
+- 如果需要调用工具 → 返回 JSON 格式
+
+关键：不要重复执行相同的工具！"""
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=hint
+                            )
+                        )
+
                         if iteration == max_iterations - 1:
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task reached maximum iterations ({max_iterations}). Progress so far:\n{result}"
@@ -442,11 +491,31 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                                 tool_call_id=tool_call.id
                             )
                         )
+
+                        # Add a hint to prompt LLM to continue if task is not complete
+                        hint = f"""
+上一个工具执行结果：{json.dumps(result)[:500]}
+
+请判断任务是否已完成：
+- 用户的原始任务是：{task}
+- 如果已经获取到页面内容 → 立即返回 DONE: 总结内容
+- 如果还需要更多步骤 → 返回 WORKING: 正在做什么
+- 如果需要调用工具 → 返回 JSON 格式
+
+关键：不要重复执行相同的工具！"""
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=hint
+                            )
+                        )
+
                         if iteration == max_iterations - 1:
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return f"Task reached maximum iterations ({max_iterations}). Progress so far:\n{result}"
                         # Continue to next iteration - tool result has been added to messages
-                        logger.info(f"工具执行完成，进入下一次迭代 (iteration={iteration+1})")
+                        logger.debug(f"工具执行完成，进入下一次迭代 (iteration={iteration+1})")
+                        continue
                 else:
                     if response.content:
                         content_str = str(response.content)
@@ -454,9 +523,34 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                             result = content_str[5:].strip()
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return result
+                        # Check if LLM indicates task is in progress
+                        if content_str.strip().upper().startswith("WORKING:"):
+                            working_msg = content_str[8:].strip()
+                            logger.info(f"LLM 正在工作中: {working_msg}")
+                            # Reset invalid response count
+                            PlannerTool._invalid_response_count = 0
+                            messages.append(
+                                provider_message.Message(
+                                    role="user",
+                                    content=f"继续执行任务。{working_msg}"
+                                )
+                            )
+                            continue
                         # Check if LLM indicates it needs a skill
                         if content_str.strip().upper().startswith("NEED_SKILL:"):
                             skill_needed = content_str[11:].strip()
+                            logger.info(f"需要技能: {skill_needed}")
+
+                            # Try to auto-install skill and retry
+                            retry_result = await self._try_auto_install_and_retry(
+                                skill_needed, messages, task, helper_plugin, registry, plugin
+                            )
+                            if retry_result is not None:
+                                # Successfully installed skill and retried, return the result
+                                logger.info(f"Skill自动安装并重试成功，共调用 {PlannerTool._llm_call_count} 次")
+                                return retry_result
+
+                            # If auto-install failed, return suggestion message
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                             return self._generate_skill_suggestion(skill_needed)
 
@@ -516,7 +610,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 请再次发送任务，我将使用新安装的技能来完成你的请求。
 """
             except Exception as e:
-                logger.debug(f"Failed to search skills: {e}")
+                logger.debug(f"Failed to search skills: {str(e)}")
 
         # If no skills found or auto-install failed, provide manual instructions
         return f"""抱歉，我无法完成这个任务，因为缺少必要的工具/技能。
@@ -560,9 +654,338 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
             logger.debug(f"Auto-install failed: {e}")
             return {"success": False, "error": str(e)}
 
+    async def _try_auto_install_and_retry(
+        self,
+        skill_needed: str,
+        messages: list,
+        task: str,
+        helper_plugin,
+        registry,
+        plugin,
+    ) -> str | None:
+        """
+        Try to automatically install a skill and retry the task.
+        Returns the result if successful, None if failed.
+        """
+        if not registry or not registry._skill_loader:
+            logger.debug("Skill loader not available for auto-install")
+            return None
+
+        try:
+            # Search for relevant skills
+            logger.info(f"正在搜索Skill: {skill_needed}")
+            found_skills = await registry._skill_loader.search_skills(skill_needed)
+            logger.debug(f"搜索结果: {len(found_skills)} 个skills found")
+
+            if not found_skills:
+                logger.info(f"未找到匹配的Skill: {skill_needed}")
+                return None
+
+            # Try to install the first matching skill
+            first_skill = found_skills[0]
+            logger.info(f"找到匹配的技能: {first_skill.name}，尝试自动安装...")
+
+            install_result = await registry._skill_loader.install_skill(first_skill.name)
+
+            if not install_result.get("success"):
+                logger.info(f"安装失败: {install_result.get('error')}")
+                return None
+
+            logger.info(f"技能 {first_skill.name} 安装成功！正在重新加载工具...")
+
+            # Reload dynamic tools to include the new skill
+            try:
+                dynamic_tools = await registry.load_dynamic_tools()
+                if dynamic_tools:
+                    logger.debug(f"重新加载了 {len(dynamic_tools)} 个动态工具")
+            except Exception as e:
+                logger.debug(f"重新加载动态工具失败: {e}")
+
+            # Get updated tools description
+            try:
+                tools_description = registry.get_tools_description()
+            except Exception as e:
+                logger.debug(f"获取 tools_description 失败: {e}")
+                tools_description = ""
+
+            # Add a message to the LLM about the newly installed skill
+            messages.append(
+                provider_message.Message(
+                    role="user",
+                    content=f"""我已自动安装了技能「{first_skill.name}」！
+
+技能描述: {first_skill.description}
+
+请使用新安装的技能继续完成以下任务:
+{task}
+
+可用的工具:
+{tools_description}
+
+请继续执行任务。"""
+                )
+            )
+
+            # Continue the ReAct loop - make another LLM call
+            # This continues from where we left off in the execute_task method
+            return await self._continue_execution(
+                messages=messages,
+                task=task,
+                helper_plugin=helper_plugin,
+                registry=registry,
+                plugin=plugin,
+                iteration_offset=0,
+            )
+
+        except Exception as e:
+            logger.debug(f"Auto-install and retry failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    async def _continue_execution(
+        self,
+        messages: list,
+        task: str,
+        helper_plugin,
+        registry,
+        plugin,
+        iteration_offset: int = 0,
+    ) -> str:
+        """
+        Continue the ReAct execution loop after skill installation.
+        This is a separate method that can be called to continue execution.
+        """
+        from langbot_plugin.api.entities.builtin.provider import message as provider_message
+
+        # Get rate limit from config
+        config = plugin.get_config() if plugin else {}
+        rate_limit_seconds = float(config.get('planner_rate_limit_seconds', 1))
+
+        # Continue with remaining iterations (we've already done some)
+        max_iterations = 5  # Continue with a few more iterations
+        del iteration_offset  # Reserved for future use
+
+        for iteration in range(max_iterations):
+            # Check if task has been stopped
+            if PlannerTool.is_task_stopped():
+                logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                return "Task has been stopped by user."
+
+            try:
+                # Rate limiting
+                current_time = time.time()
+                time_since_last_call = current_time - PlannerTool._last_llm_call_time
+                if time_since_last_call < rate_limit_seconds:
+                    wait_time = rate_limit_seconds - time_since_last_call
+                    logger.debug(f"Rate limiting: waiting {wait_time:.2f}s before LLM call")
+                    await asyncio.sleep(wait_time)
+                PlannerTool._last_llm_call_time = time.time()
+
+                # Increment LLM call count
+                PlannerTool._llm_call_count += 1
+                logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次), task: {task[:50]}... (skill安装后重试)")
+
+                response = await plugin.invoke_llm(
+                    llm_model_uuid=config.get('planner_model_uuid', ''),
+                    messages=messages,
+                    funcs=[]
+                )
+
+                # Check for DONE response
+                if response.content and not response.tool_calls:
+                    content_str = str(response.content)
+                    if content_str.strip().upper().startswith("DONE:"):
+                        result = content_str[5:].strip()
+                        logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                        return result
+
+                    # Check for WORKING response
+                    if content_str.strip().upper().startswith("WORKING:"):
+                        working_msg = content_str[8:].strip()
+                        logger.info(f"LLM 正在工作中: {working_msg}")
+                        PlannerTool._invalid_response_count = 0
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=f"继续执行任务。{working_msg}"
+                            )
+                        )
+                        continue
+
+                    # Check for another NEED_SKILL (nested case)
+                    if content_str.strip().upper().startswith("NEED_SKILL:"):
+                        # Recursively try to install another skill
+                        nested_skill_needed = content_str[11:].strip()
+                        retry_result = await self._try_auto_install_and_retry(
+                            nested_skill_needed, messages, task, helper_plugin, registry, plugin
+                        )
+                        if retry_result is not None:
+                            return retry_result
+                        # If nested install failed, continue with suggestion
+                        return self._generate_skill_suggestion(nested_skill_needed)
+
+                    # Try to parse and execute tool
+                    tool_call = self._parse_tool_call_from_content(content_str)
+                    if tool_call:
+                        result = await self._execute_tool(tool_call, helper_plugin, registry)
+
+                        if PlannerTool.is_task_stopped():
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                            return f"Task stopped by user. Last result:\n{result}"
+
+                        messages.append(
+                            provider_message.Message(
+                                role="tool",
+                                content=json.dumps(result),
+                                tool_call_id=f"call_retry_{iteration}"
+                            )
+                        )
+
+                        # Add hint
+                        hint = f"""
+上一个工具执行结果：{json.dumps(result)[:500]}
+
+请判断任务是否已完成：
+- 用户的原始任务是：{task}
+- 如果已经获取到页面内容 → 立即返回 DONE: 总结内容
+- 如果还需要更多步骤 → 返回 WORKING: 正在做什么
+- 如果需要调用工具 → 返回 JSON 格式
+
+关键：不要重复执行相同的工具！"""
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=hint
+                            )
+                        )
+                        continue
+
+                    # Invalid response
+                    PlannerTool._invalid_response_count += 1
+                    if PlannerTool._invalid_response_count >= 3:
+                        return f"无法完成任务。LLM 连续返回了 {PlannerTool._invalid_response_count} 次无效响应。\n\n最后响应：\n{content_str[:500]}"
+                    messages.append(response)
+                    continue
+
+                # Handle structured tool calls
+                if response.tool_calls:
+                    for tool_call in response.tool_calls:
+                        result = await self._execute_tool(tool_call, helper_plugin, registry)
+
+                        if PlannerTool.is_task_stopped():
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                            return f"Task stopped by user. Last result:\n{result}"
+
+                        messages.append(
+                            provider_message.Message(
+                                role="tool",
+                                content=json.dumps(result),
+                                tool_call_id=tool_call.id
+                            )
+                        )
+
+                        # Add hint
+                        hint = f"""
+上一个工具执行结果：{json.dumps(result)[:500]}
+
+请判断任务是否已完成：
+- 用户的原始任务是：{task}
+- 如果已经获取到页面内容 → 立即返回 DONE: 总结内容
+- 如果还需要更多步骤 → 返回 WORKING: 正在做什么
+- 如果需要调用工具 → 返回 JSON 格式
+
+关键：不要重复执行相同的工具！"""
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=hint
+                            )
+                        )
+                        continue
+                else:
+                    if response.content:
+                        content_str = str(response.content)
+                        if content_str.strip().upper().startswith("DONE:"):
+                            result = content_str[5:].strip()
+                            logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                            return result
+                        if content_str.strip().upper().startswith("WORKING:"):
+                            working_msg = content_str[8:].strip()
+                            logger.info(f"LLM 正在工作中: {working_msg}")
+                            PlannerTool._invalid_response_count = 0
+                            messages.append(
+                                provider_message.Message(
+                                    role="user",
+                                    content=f"继续执行任务。{working_msg}"
+                                )
+                            )
+                            continue
+
+            except Exception as e:
+                import traceback
+                error_msg = str(e)
+                logger.error(f"执行异常: {error_msg}")
+                logger.error(traceback.format_exc())
+                logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                return f"Error during execution: {error_msg}"
+
+        logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+        return f"Task reached maximum iterations ({max_iterations}) after skill installation."
+
     def _parse_tool_call_from_content(self, content: str):
         """Parse JSON tool call from LLM response content."""
         import re
+
+        # First, try to parse the entire content as JSON directly
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict) and 'tool' in data and 'arguments' in data:
+                tool_name = data['tool']
+                arguments = data['arguments']
+                class MockToolCall:
+                    def __init__(self, name, args):
+                        import uuid
+                        self.id = f"call_{uuid.uuid4().hex[:8]}"
+                        self.function = type('obj', (object,), {'name': name, 'arguments': args})()
+                return MockToolCall(tool_name, arguments)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        # Try to extract and parse JSON using regex that handles nested braces
+        # Find the outermost JSON object
+        json_match = re.search(r'\{[^{}]*"tool"[^{}]*\}[,}]', content)
+        if json_match:
+            # Find the full JSON including nested objects
+            start = content.find('{', json_match.start())
+            if start != -1:
+                # Try to find matching closing brace
+                depth = 0
+                end = start
+                for i, c in enumerate(content[start:], start):
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                json_str = content[start:end]
+                try:
+                    data = json.loads(json_str)
+                    if isinstance(data, dict) and 'tool' in data and 'arguments' in data:
+                        tool_name = data['tool']
+                        arguments = data['arguments']
+                        class MockToolCall:
+                            def __init__(self, name, args):
+                                import uuid
+                                self.id = f"call_{uuid.uuid4().hex[:8]}"
+                                self.function = type('obj', (object,), {'name': name, 'arguments': args})()
+                        return MockToolCall(tool_name, arguments)
+                except json.JSONDecodeError:
+                    pass
+
+        # Fallback to regex parsing
         json_pattern = r'\{["\']tool["\']:\s*["\'](\w+)["\']\s*,\s*["\']arguments["\']:\s*\{[^}]*\}'
         match = re.search(json_pattern, content)
         if match:

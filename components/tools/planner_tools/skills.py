@@ -40,11 +40,28 @@ class Skill:
 class SkillLoader:
     """Loads skills from local directory and remote ClawHub"""
 
+    # Fallback skill mappings when remote API is unavailable
+    # Format: skill_keyword -> (github_repo, skill_name)
+    FALLBACK_SKILLS = {
+        "weather": ("langbot-app/clawhub-weather", "weather"),
+        "email": ("langbot-app/clawhub-email", "email"),
+        "note": ("langbot-app/clawhub-notes", "notes"),
+        "notes": ("langbot-app/clawhub-notes", "notes"),
+        "reminder": ("langbot-app/clawhub-reminder", "reminder"),
+        "calendar": ("langbot-app/clawhub-calendar", "calendar"),
+        "slack": ("langbot-app/clawhub-slack", "slack"),
+        "discord": ("langbot-app/clawhub-discord", "discord"),
+    }
+
     def __init__(self, config: dict[str, Any]):
         self.config = config
         # Default skills directory: ~/.claude/skills
         self.skills_dir = Path(os.path.expanduser(config.get("skills_path", "~/.claude/skills")))
-        self.hub_url = config.get("clawhub_url", "https://api.clawhub.dev")
+        # Try multiple possible API endpoints
+        self.hub_urls = [
+            config.get("clawhub_url", "https://api.clawhub.ai"),
+            "https://api.clawhub.dev",  # Legacy, may not work
+        ]
         self._loaded_skills: dict[str, Skill] = {}
 
     async def initialize(self) -> None:
@@ -101,20 +118,49 @@ class SkillLoader:
 
         # Try to search remote if no local results
         if not results:
-            try:
-                remote_skills = await self._search_remote(query)
-                results.extend(remote_skills)
-            except Exception as e:
-                print(f"[DEBUG] Failed to search remote hub: {e}")
+            # Try each hub URL
+            for hub_url in self.hub_urls:
+                try:
+                    remote_skills = await self._search_remote(query, hub_url)
+                    if remote_skills:
+                        results.extend(remote_skills)
+                        break
+                except Exception as e:
+                    print(f"[DEBUG] Failed to search {hub_url}: {e}")
+                    continue
+
+        # If still no results, try fallback skills from GitHub
+        if not results:
+            results = self._search_fallback_skills(query_lower)
 
         return results
 
-    async def _search_remote(self, query: str) -> list[Skill]:
+    def _search_fallback_skills(self, query: str) -> list[Skill]:
+        """Search fallback skills from known GitHub repos"""
+        results = []
+        for keyword, (repo, name) in self.FALLBACK_SKILLS.items():
+            if keyword in query or query in keyword:
+                # Create a temporary skill object for fallback
+                skill = Skill(
+                    name=name,
+                    version="1.0.0",
+                    description=f"Skill from {repo} (fallback)",
+                    path=Path(f"~/.claude/skills/{name}").expanduser(),
+                    manifest={"skill": name, "source": "fallback", "repo": repo},
+                    source="fallback",
+                )
+                results.append(skill)
+        return results
+
+    async def _search_remote(self, query: str, hub_url: str = None) -> list[Skill]:
         """Search remote ClawHub for skills"""
+        if hub_url is None:
+            hub_url = self.hub_urls[0] if self.hub_urls else ""
+
         skills = []
         try:
             async with aiohttp.ClientSession() as session:
-                url = f"{self.hub_url}/skills/search"
+                url = f"{hub_url}/skills/search"
                 params = {"q": query}
                 async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
@@ -140,17 +186,27 @@ class SkillLoader:
             # Assume it's a GitHub repo URL or owner/repo format
             return await self._download_from_github(skill_name)
 
-        # Try remote hub API
-        try:
-            async with aiohttp.ClientSession() as session:
-                url = f"{self.hub_url}/skills/{skill_name}/download"
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        return await self._extract_skill(await response.read(), skill_name)
-        except Exception as e:
-            print(f"[DEBUG] Failed to download skill from hub: {e}")
+        # Try fallback skills first (most reliable for known skills)
+        for keyword, (repo, name) in self.FALLBACK_SKILLS.items():
+            if skill_name.lower() == name.lower() or skill_name.lower() == keyword:
+                print(f"[DEBUG] Using fallback: {repo} for skill {skill_name}")
+                result = await self._download_from_github(repo)
+                if result:
+                    return result
 
-        # Try GitHub as fallback
+        # Try each hub URL
+        for hub_url in self.hub_urls:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    url = f"{hub_url}/skills/{skill_name}/download"
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                        if response.status == 200:
+                            return await self._extract_skill(await response.read(), skill_name)
+            except Exception as e:
+                print(f"[DEBUG] Failed to download skill from {hub_url}: {e}")
+                continue
+
+        # Try GitHub as final fallback
         return await self._download_from_github(f"langbot-app/clawhub-{skill_name}")
 
     async def _download_from_github(self, repo: str) -> Skill | None:

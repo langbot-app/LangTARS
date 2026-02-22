@@ -13,6 +13,8 @@
   <a href="https://github.com/langbot-app/LangTARS">GitHub</a>
 </p>
 
+> ⚠️ **注意**：功能仍在积极开发中，如遇 bug 请提交 [issue](https://github.com/langbot-app/LangTARS/issues)。
+
 ---
 
 ## 什么是 LangTARS？
@@ -57,9 +59,10 @@ LangTARS 采用不同的方式：
 这是使 LangTARS 与众不同的**主要命令**。只需描述您想要做的事情，AI 就会自主规划并使用可用工具执行任务。
 
 ```
-!tars auto 帮我下载一个文件到桌面
-!tars auto 打开 Safari 并访问 github
+!tars auto 打开 Safari，访问 langbot.app,抓取元素并且告诉我
+!tars auto 新建一个备忘录，标题和内容为你好
 !tars auto 帮我整理桌面上的文件
+~~!tars auto 给我炒俩菜。~~
 ```
 
 ### 浏览器控制
