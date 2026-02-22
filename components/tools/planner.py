@@ -47,10 +47,31 @@ class PlannerTool(Tool):
     _subprocess: Any = None
     _planner_process: Any = None  # subprocess.Popen instance
 
+    # Current running asyncio task (for cancellation)
+    _current_asyncio_task: Any = None
+    # Event to signal task stop
+    _stop_event: asyncio.Event | None = None
+
     @classmethod
     def stop_task(cls, task_id: str = "default") -> bool:
         """Stop the current running task by killing the subprocess"""
         cls._task_stopped = True
+
+        # Signal the stop event if it exists
+        if cls._stop_event:
+            try:
+                cls._stop_event.set()
+                logger.debug("Stop event set")
+            except Exception as e:
+                logger.debug(f"Error setting stop event: {e}")
+
+        # Try to cancel the asyncio task if running
+        if cls._current_asyncio_task and not cls._current_asyncio_task.done():
+            try:
+                cls._current_asyncio_task.cancel()
+                logger.debug("Cancelled asyncio task")
+            except Exception as e:
+                logger.debug(f"Error cancelling task: {e}")
 
         # Kill the subprocess if running
         if cls._planner_process:
@@ -72,6 +93,11 @@ class PlannerTool(Tool):
         return True
 
     @classmethod
+    def set_asyncio_task(cls, task: Any) -> None:
+        """Set the current asyncio task for cancellation support"""
+        cls._current_asyncio_task = task
+
+    @classmethod
     def is_task_stopped(cls) -> bool:
         """Check if the current task has been stopped"""
         return cls._task_stopped
@@ -85,6 +111,7 @@ class PlannerTool(Tool):
         cls._invalid_response_count = 0
         cls._subprocess = None
         cls._planner_process = None
+        cls._stop_event = asyncio.Event()
 
     SYSTEM_PROMPT = """You are a task planning assistant. Your job is to help users accomplish tasks on their Mac by intelligently calling tools.
 
@@ -105,10 +132,21 @@ WORKING: Description of what you are currently doing (e.g., "Fetching page conte
 When you need a skill that doesn't exist, respond with ONLY:
 NEED_SKILL: Description of what capability you need
 
+## CRITICAL: After tool execution, you MUST respond with DONE
+
+After any tool returns {"success": true}, you MUST immediately return DONE: with a summary.
+- Opening an app? DONE: Opened [app name]
+- Navigated to a website? DONE: Opened [URL]
+- Executed a command? DONE: Command executed successfully
+- DO NOT keep calling the same tool repeatedly!
+
 ## Examples:
 
 User: "List files in current directory"
 Response: {"tool": "shell", "arguments": {"command": "ls -la"}}
+# Tool result: {"success": true, "stdout": "...", ...}
+# Then respond with:
+DONE: Listed files in current directory
 
 User: "Open Safari and go to github.com"
 Response: {"tool": "safari_navigate", "arguments": {"url": "https://github.com"}}
@@ -373,20 +411,21 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 PlannerTool._llm_call_count += 1
                 logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次), task: {task[:50]}...")
 
-                response = await plugin.invoke_llm(
-                    llm_model_uuid=llm_model_uuid,
-                    messages=messages,
-                    funcs=[]
-                )
+                try:
+                    response = await plugin.invoke_llm(
+                        llm_model_uuid=llm_model_uuid,
+                        messages=messages,
+                        funcs=[]
+                    )
+                except asyncio.CancelledError:
+                    PlannerTool.stop_task()
+                    logger.info("Task cancelled via CancelledError")
+                    return "Task has been stopped by user."
 
                 # Check if stopped after LLM call (important for interrupt)
                 if PlannerTool.is_task_stopped():
                     logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                     return "Task has been stopped by user."
-
-            except asyncio.CancelledError:
-                logger.info("Task cancelled via CancelledError")
-                return "Task has been cancelled."
 
                 # Check if there's content (non-tool response)
                 if response.content and not response.tool_calls:
@@ -784,11 +823,16 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 PlannerTool._llm_call_count += 1
                 logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次), task: {task[:50]}... (skill安装后重试)")
 
-                response = await plugin.invoke_llm(
-                    llm_model_uuid=config.get('planner_model_uuid', ''),
-                    messages=messages,
-                    funcs=[]
-                )
+                try:
+                    response = await plugin.invoke_llm(
+                        llm_model_uuid=config.get('planner_model_uuid', ''),
+                        messages=messages,
+                        funcs=[]
+                    )
+                except asyncio.CancelledError:
+                    PlannerTool.stop_task()
+                    logger.info("Task cancelled via CancelledError")
+                    return "Task has been stopped by user."
 
                 # Check if stopped after LLM call
                 if PlannerTool.is_task_stopped():
@@ -1158,6 +1202,12 @@ class PlannerExecutor:
         query_id: int = 0,
     ):
         """Execute task with streaming - yields after each iteration for interrupt check"""
+        import asyncio
+
+        # Register current task for cancellation support
+        current_task = asyncio.current_task()
+        PlannerTool.set_asyncio_task(current_task)
+
         # Reset state
         PlannerTool.reset_task_state()
         PlannerTool.set_current_task("default", task)
@@ -1226,6 +1276,12 @@ class PlannerExecutor:
             PlannerTool._llm_call_count += 1
             logger.warning(f"[{iteration+1}/{max_iterations}] LLM 调用开始: {task[:30]}...")
 
+            # Check stop before LLM call
+            if PlannerTool.is_task_stopped():
+                yield "Task stopped by user."
+                return
+
+            # Run LLM call
             try:
                 response = await plugin.invoke_llm(
                     llm_model_uuid=llm_model_uuid,
@@ -1233,12 +1289,17 @@ class PlannerExecutor:
                     funcs=[]
                 )
             except asyncio.CancelledError:
+                PlannerTool.stop_task()
                 yield "Task stopped by user."
                 return
-            except asyncio.TimeoutError:
-                yield "LLM 调用超时，请重试或使用 /tars stop 停止任务。"
-                return
+            except Exception as e:
+                logger.error(f"LLM call error: {e}")
+                continue
 
+            # Yield control to event loop after LLM call to allow stop check
+            await asyncio.sleep(0)
+
+            # 检查停止标志 - 在 LLM 调用完成后立即检查
             if PlannerTool.is_task_stopped():
                 yield "Task stopped by user."
                 return
@@ -1280,7 +1341,7 @@ class PlannerExecutor:
                         messages.append(
                             provider_message.Message(
                                 role="user",
-                                content=f"工具执行结果：{json.dumps(result)[:500]}\n请判断任务是否已完成。"
+                                content=f"工具执行结果：{json.dumps(result)[:500]}\n\n请立即判断任务是否已完成：\n- 如果工具已成功执行 → 必须返回 DONE: 执行结果总结\n- 如果还需要获取页面内容 → 返回 WORKING: 需要做什么，然后调用获取内容的工具\n- 如果需要调用工具 → 返回 JSON 格式"
                             )
                         )
                         continue
@@ -1310,7 +1371,7 @@ class PlannerExecutor:
                         messages.append(
                             provider_message.Message(
                                 role="user",
-                                content=f"上一个工具执行结果：{json.dumps(result)[:500]}\n请判断任务是否已完成。"
+                                content=f"工具执行结果：{json.dumps(result)[:500]}\n\n请立即判断任务是否已完成：\n- 如果工具已成功执行 → 必须返回 DONE: 执行结果总结\n- 如果还需要获取页面内容 → 返回 WORKING: 需要做什么，然后调用获取内容的工具\n- 如果需要调用工具 → 返回 JSON 格式"
                             )
                         )
 
