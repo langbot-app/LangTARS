@@ -45,12 +45,11 @@ LangTARS takes a different approach:
 
 This is the **primary command** that makes LangTARS special. Simply describe what you want to do, and the AI will autonomously plan and execute the task using available tools.
 
-```
-!tars auto Open Safari, visit langbot.app, scrape elements and tell me
-!tars auto Create a new note with title and content "hello"
-!tars auto Help me organize the files on my desktop
-~~!tars auto Cook me some dishes.~~
-```
+- `!tars auto Open Safari, visit langbot.app, scrape elements and tell me`
+- `!tars auto Create a new note with title and content "hello"`
+- `!tars auto Help me organize the files on my desktop`
+
+- ~~!tars auto Cook me some dishes.~~
 
 ### Browser Control
 
