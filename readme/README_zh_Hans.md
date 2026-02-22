@@ -62,8 +62,7 @@ LangTARS 采用不同的方式：
 - `!tars auto 打开 Safari，访问 langbot.app,抓取元素并且告诉我`
 - `!tars auto 新建一个备忘录，标题和内容为你好`
 - `!tars auto 帮我整理桌面上的文件`
-
-- ~~!tars auto 给我炒俩菜。~~
+- <code><del>!tars auto 给我炒俩菜。</del></code>
 
 ### 浏览器控制
 

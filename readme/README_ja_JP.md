@@ -62,8 +62,7 @@ LangTARS は異なるアプローチを取ります：
 - `!tars auto Safariを開いて、langbot.appにアクセスして、要素を取得して教えて`
 - `!tars auto 新規メモを作成して、タイトルと内容を「こんにちは」にして`
 - `!tars auto デスクトップのファイルを整理して`
-
-- ~~!tars auto 料理を作ってください。~~
+- <code><del>!tars auto 料理を作ってください。</del></code>
 
 ### ブラウザ制御
 

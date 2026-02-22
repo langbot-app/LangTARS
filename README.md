@@ -49,7 +49,7 @@ This is the **primary command** that makes LangTARS special. Simply describe wha
 - `!tars auto Create a new note with title and content "hello"`
 - `!tars auto Help me organize the files on my desktop`
 
-- ~~!tars auto Cook me some dishes.~~
+- <code><del>!tars auto Cook me some dishes.</del></code>
 
 ### Browser Control
 
