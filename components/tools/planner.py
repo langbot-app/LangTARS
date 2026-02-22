@@ -43,56 +43,38 @@ class PlannerTool(Tool):
     # Tool registry instance
     _tool_registry: ToolRegistry | None = None
 
-    # File-based stop flag for cross-process communication
-    _stop_file_path: str = "/tmp/langtars_stop"
-
-    @classmethod
-    def _get_stop_file_path(cls) -> str:
-        """Get the path to the stop flag file"""
-        return cls._stop_file_path
-
-    @classmethod
-    def _is_stopped_from_file(cls) -> bool:
-        """Check if stop flag file exists (for cross-process stop)"""
-        import os
-        return os.path.exists(cls._stop_file_path)
-
-    @classmethod
-    def _clear_stop_file(cls) -> None:
-        """Clear the stop flag file"""
-        import os
-        try:
-            if os.path.exists(cls._stop_file_path):
-                os.remove(cls._stop_file_path)
-        except:
-            pass
+    # Subprocess for running planner
+    _subprocess: Any = None
+    _planner_process: Any = None  # subprocess.Popen instance
 
     @classmethod
     def stop_task(cls, task_id: str = "default") -> bool:
-        """Stop the current running task - writes to file for cross-process communication"""
-        # Set class variable
+        """Stop the current running task by killing the subprocess"""
         cls._task_stopped = True
-        # Also write to file for cross-process communication
-        try:
-            with open(cls._stop_file_path, 'w') as f:
-                f.write(f"stopped:{task_id}")
-        except Exception as e:
-            logger.error(f"Failed to create stop file: {e}")
+
+        # Kill the subprocess if running
+        if cls._planner_process:
+            try:
+                cls._planner_process.terminate()
+                # Force kill if still running after 1 second
+                try:
+                    cls._planner_process.wait(timeout=1)
+                except:
+                    try:
+                        cls._planner_process.kill()
+                    except:
+                        pass
+                cls._planner_process = None
+            except Exception as e:
+                logger.debug(f"Error terminating process: {e}")
+                cls._planner_process = None
+
         return True
 
     @classmethod
     def is_task_stopped(cls) -> bool:
-        """Check if the current task has been stopped (checks both class var and file)"""
-        import os
-        # First check class variable
-        if cls._task_stopped:
-            return True
-        # Also check file for cross-process communication
-        file_exists = cls._is_stopped_from_file()
-        if file_exists:
-            cls._task_stopped = True
-            return True
-        return False
+        """Check if the current task has been stopped"""
+        return cls._task_stopped
 
     @classmethod
     def reset_task_state(cls) -> None:
@@ -101,7 +83,8 @@ class PlannerTool(Tool):
         cls._current_task_info = {}
         cls._llm_call_count = 0
         cls._invalid_response_count = 0
-        cls._clear_stop_file()
+        cls._subprocess = None
+        cls._planner_process = None
 
     SYSTEM_PROMPT = """You are a task planning assistant. Your job is to help users accomplish tasks on their Mac by intelligently calling tools.
 
@@ -318,7 +301,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         query_id: int = 0,
     ) -> str:
         """Execute task with ReAct loop using provided plugin instance."""
-        # Reset task state for new task
+        # Reset task state for new task (this clears _task_stopped)
         PlannerTool.reset_task_state()
         PlannerTool.set_current_task("default", task)
 
@@ -364,15 +347,13 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 
         # ReAct loop
         for iteration in range(max_iterations):
-            # Check if task has been stopped (use method to check file for cross-process)
-            if PlannerTool.is_task_stopped():
-                logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
-                return "Task has been stopped by user."
-
             try:
+                # Check if task has been stopped
+                if PlannerTool.is_task_stopped():
+                    return "Task has been stopped by user."
+
                 # Check if stopped before LLM call
                 if PlannerTool.is_task_stopped():
-                    logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
                     return "Task has been stopped by user."
 
                 # Rate limiting: wait if necessary
@@ -382,6 +363,10 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     wait_time = rate_limit_seconds - time_since_last_call
                     logger.debug(f"Rate limiting: waiting {wait_time:.2f}s before LLM call")
                     await asyncio.sleep(wait_time)
+                    # Check if stopped during sleep
+                    if PlannerTool.is_task_stopped():
+                        logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                        return "Task has been stopped by user."
                 PlannerTool._last_llm_call_time = time.time()
 
                 # Increment LLM call count
@@ -393,6 +378,15 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     messages=messages,
                     funcs=[]
                 )
+
+                # Check if stopped after LLM call (important for interrupt)
+                if PlannerTool.is_task_stopped():
+                    logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                    return "Task has been stopped by user."
+
+            except asyncio.CancelledError:
+                logger.info("Task cancelled via CancelledError")
+                return "Task has been cancelled."
 
                 # Check if there's content (non-tool response)
                 if response.content and not response.tool_calls:
@@ -483,6 +477,11 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 
                         messages.append(response)
                         continue
+
+                # Check if stopped before tool execution
+                if PlannerTool.is_task_stopped():
+                    logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                    return "Task has been stopped by user."
 
                 # Handle structured tool calls
                 if response.tool_calls:
@@ -775,6 +774,10 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     wait_time = rate_limit_seconds - time_since_last_call
                     logger.debug(f"Rate limiting: waiting {wait_time:.2f}s before LLM call")
                     await asyncio.sleep(wait_time)
+                    # Check if stopped during sleep
+                    if PlannerTool.is_task_stopped():
+                        logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                        return "Task has been stopped by user."
                 PlannerTool._last_llm_call_time = time.time()
 
                 # Increment LLM call count
@@ -786,6 +789,11 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     messages=messages,
                     funcs=[]
                 )
+
+                # Check if stopped after LLM call
+                if PlannerTool.is_task_stopped():
+                    logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                    return "Task has been stopped by user."
 
                 # Check for DONE response
                 if response.content and not response.tool_calls:
@@ -855,6 +863,11 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         return f"无法完成任务。LLM 连续返回了 {PlannerTool._invalid_response_count} 次无效响应。\n\n最后响应：\n{content_str[:500]}"
                     messages.append(response)
                     continue
+
+                # Check if stopped before tool execution
+                if PlannerTool.is_task_stopped():
+                    logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
+                    return "Task has been stopped by user."
 
                 # Handle structured tool calls
                 if response.tool_calls:
@@ -1127,3 +1140,234 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 return {"error": f"Failed to fetch URL: {str(e)}"}
         else:
             return {"error": f"Unknown tool: {tool_name}"}
+
+
+# Streaming executor that yields after each iteration for interruptible execution
+class PlannerExecutor:
+    """Executor that runs planner with streaming for interrupt support"""
+
+    async def execute_task_streaming(
+        self,
+        task: str,
+        max_iterations: int,
+        llm_model_uuid: str,
+        plugin: 'LangTARSPlugin',
+        helper_plugin: 'LangTARS' = None,
+        registry: ToolRegistry | None = None,
+        session=None,
+        query_id: int = 0,
+    ):
+        """Execute task with streaming - yields after each iteration for interrupt check"""
+        # Reset state
+        PlannerTool.reset_task_state()
+        PlannerTool.set_current_task("default", task)
+
+        if not task:
+            yield "Error: No task provided."
+            return
+
+        if not llm_model_uuid:
+            yield "Error: No LLM model specified."
+            return
+
+        # Tell user task started
+        yield f"开始执行任务: {task[:50]}...\n"
+
+        # Log task start
+        logger.warning(f"=== 开始执行任务: {task[:50]}... (max_iterations={max_iterations}) ===")
+
+        # Initialize registry if not provided
+        if registry is None and plugin:
+            registry = await self._get_tool_registry(plugin)
+
+        # Get rate limit from config
+        config = plugin.get_config() if plugin else {}
+        rate_limit_seconds = float(config.get('planner_rate_limit_seconds', 1))
+
+        # Get tools description
+        tools_description = ""
+        if registry:
+            try:
+                tools_description = registry.get_tools_description()
+            except Exception:
+                pass
+
+        # Build messages
+        messages = [
+            provider_message.Message(
+                role="system",
+                content=PlannerTool.SYSTEM_PROMPT
+            ),
+        ]
+
+        user_message = f"{task}\n\nIMPORTANT: Use a tool to complete this task. Available tools:\n{tools_description}\n\nRemember: Respond with JSON format only: {{\"tool\": \"name\", \"arguments\": {{...}}}}"
+        messages.append(provider_message.Message(
+            role="user",
+            content=user_message
+        ))
+
+        # ReAct loop with streaming
+        for iteration in range(max_iterations):
+            # Check if stopped
+            if PlannerTool.is_task_stopped():
+                yield "Task stopped by user."
+                return
+
+            # Rate limiting
+            current_time = time.time()
+            time_since_last_call = current_time - PlannerTool._last_llm_call_time
+            if time_since_last_call < rate_limit_seconds:
+                await asyncio.sleep(rate_limit_seconds - time_since_last_call)
+                if PlannerTool.is_task_stopped():
+                    yield "Task stopped by user."
+                    return
+            PlannerTool._last_llm_call_time = time.time()
+
+            PlannerTool._llm_call_count += 1
+            logger.warning(f"[{iteration+1}/{max_iterations}] LLM 调用开始: {task[:30]}...")
+
+            try:
+                response = await plugin.invoke_llm(
+                    llm_model_uuid=llm_model_uuid,
+                    messages=messages,
+                    funcs=[]
+                )
+            except asyncio.CancelledError:
+                yield "Task stopped by user."
+                return
+            except asyncio.TimeoutError:
+                yield "LLM 调用超时，请重试或使用 /tars stop 停止任务。"
+                return
+
+            if PlannerTool.is_task_stopped():
+                yield "Task stopped by user."
+                return
+
+            # Log LLM response (full content including thinking)
+            if response.content:
+                content_str = str(response.content)
+                logger.warning(f"[{iteration+1}] LLM 思考过程:\n{content_str[:1000]}")
+
+                if response.content and not response.tool_calls:
+                    content_str = str(response.content)
+                    if content_str.strip().upper().startswith("DONE:"):
+                        logger.warning(f"[{iteration+1}] 任务完成: {content_str[5:].strip()[:100]}")
+                        yield content_str[5:].strip()
+                        return
+
+                    if content_str.strip().upper().startswith("WORKING:"):
+                        logger.warning(f"[{iteration+1}] 工作中: {content_str[8:].strip()}")
+                        messages.append(provider_message.Message(
+                            role="user",
+                            content=f"继续执行任务。{content_str[8:]}"
+                        ))
+                        continue
+
+                    # Try parse JSON
+                    tool_call = self._parse_tool_call_from_content(content_str)
+                    if tool_call:
+                        tool_name = tool_call.get('tool', 'unknown')
+                        logger.warning(f"[{iteration+1}] 调用工具: {tool_name}")
+                        result = await self._execute_tool(
+                            tool_call, helper_plugin or plugin, registry
+                        )
+                        logger.warning(f"[{iteration+1}] 工具结果: {str(result)[:100]}")
+
+                        if PlannerTool.is_task_stopped():
+                            yield "Task stopped by user."
+                            return
+
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=f"工具执行结果：{json.dumps(result)[:500]}\n请判断任务是否已完成。"
+                            )
+                        )
+                        continue
+
+                # Handle tool_calls
+                if response.tool_calls:
+                    for tool_call in response.tool_calls:
+                        tool_name = tool_call.function.name if hasattr(tool_call, 'function') else 'unknown'
+                        logger.warning(f"[{iteration+1}] 调用工具: {tool_name}")
+                        result = await self._execute_tool(
+                            tool_call, helper_plugin or plugin, registry
+                        )
+                        logger.warning(f"[{iteration+1}] 工具结果: {str(result)[:100]}")
+
+                        if PlannerTool.is_task_stopped():
+                            yield "Task stopped by user."
+                            return
+
+                        messages.append(
+                            provider_message.Message(
+                                role="tool",
+                                content=json.dumps(result),
+                                tool_call_id=tool_call.id
+                            )
+                        )
+
+                        messages.append(
+                            provider_message.Message(
+                                role="user",
+                                content=f"上一个工具执行结果：{json.dumps(result)[:500]}\n请判断任务是否已完成。"
+                            )
+                        )
+
+        yield f"Max iterations ({max_iterations}) reached. Task incomplete."
+
+    async def _get_tool_registry(self, plugin, helper_plugin=None):
+        """Get tool registry"""
+        return await PlannerTool()._get_tool_registry(plugin)
+
+    def _parse_tool_call_from_content(self, content: str):
+        """Parse JSON tool call from content"""
+        import re
+        # First, try to parse the entire content as JSON directly
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict) and 'tool' in data and 'arguments' in data:
+                return data
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        # Try regex for nested JSON
+        json_match = re.search(r'\{[^{}]*"tool"[^{}]*\}', content)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except:
+                pass
+        return None
+
+    async def _execute_tool(self, tool_call, helper_plugin, registry):
+        """Execute a tool call"""
+        tool_name = None
+        arguments = {}
+
+        if hasattr(tool_call, 'function'):
+            tool_name = tool_call.function.name
+            arguments = tool_call.function.arguments
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except:
+                    arguments = {}
+        elif isinstance(tool_call, dict):
+            tool_name = tool_call.get('tool') or tool_call.get('name')
+            arguments = tool_call.get('arguments', {})
+
+        if not tool_name:
+            return {"error": "No tool name specified"}
+
+        # Execute via registry
+        try:
+            if registry:
+                tool = registry.get_tool(tool_name)
+                if tool:
+                    result = await tool.execute(helper_plugin, arguments)
+                    return result
+        except Exception as e:
+            return {"error": f"Tool execution failed: {str(e)}"}
+
+        return {"error": f"Tool not found: {tool_name}"}

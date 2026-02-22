@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.api.definition.components.command.command import Command, Subcommand
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext, CommandReturn
 from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain
+
+from components.helpers.plugin import get_helper
 
 logger = logging.getLogger(__name__)
 
@@ -121,46 +122,42 @@ class LangTARS(Command):
         )
 
 
-# Separate class for command handlers to avoid self binding issues
+# Separate class for command handlers - uses singleton PluginHelper
 class LanTARSCommand:
-    """Static command handlers that delegate to main plugin."""
+    """Static command handlers that delegate to shared PluginHelper."""
 
     @staticmethod
-    async def shell(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def shell(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle shell command execution."""
         params = context.crt_params
         if not params:
             yield CommandReturn(text="Usage: /tars shell <command>")
             return
 
-        command = ' '.join(params)
+        command = " ".join(params)
         yield CommandReturn(text=f"Executing: `{command}`\n\n")
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.run_shell(command)
+        helper = await get_helper()
+        result = await helper.run_shell(command)
 
-        if result['success']:
-            output = result.get('stdout', '') or result.get('stderr', '')
+        if result["success"]:
+            output = result.get("stdout", "") or result.get("stderr", "")
             yield CommandReturn(text=f"Command executed successfully\n\n```\n{output}\n```")
         else:
             yield CommandReturn(text=f"Command failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def ps(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def ps(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle process listing."""
         params = context.crt_params
         filter_pattern = params[0] if params else None
         limit = 20
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.list_processes(filter_pattern, limit)
+        helper = await get_helper()
+        result = await helper.list_processes(filter_pattern, limit)
 
-        if result['success']:
-            processes = result.get('processes', [])
+        if result["success"]:
+            processes = result.get("processes", [])
             if not processes:
                 yield CommandReturn(text="No processes found.")
                 return
@@ -169,18 +166,18 @@ class LanTARSCommand:
             lines.append(f"{'PID':<8} {'CPU%':<8} {'MEM%':<8} {'COMMAND'}")
             lines.append("-" * 60)
             for p in processes[:15]:
-                cmd = p.get('command', '')[:30]
+                cmd = p.get("command", "")[:30]
                 lines.append(f"{p.get('pid',''):<8} {p.get('cpu',''):<8} {p.get('mem',''):<8} {cmd}")
 
             if len(processes) > 15:
                 lines.append(f"... and {len(processes) - 15} more")
 
-            yield CommandReturn(text='\n'.join(lines))
+            yield CommandReturn(text="\n".join(lines))
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def kill(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def kill(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle process killing."""
         params = context.crt_params
         if not params:
@@ -188,49 +185,45 @@ class LanTARSCommand:
             return
 
         target = params[0]
-        force = '-f' in params
+        force = "-f" in params
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.kill_process(target, force=force)
+        helper = await get_helper()
+        result = await helper.kill_process(target, force=force)
 
-        if result['success']:
+        if result["success"]:
             yield CommandReturn(text=f"Process terminated: {target}")
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def ls(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def ls(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle directory listing."""
         params = context.crt_params
-        path = params[0] if params else '.'
-        show_hidden = '-a' in params
+        path = params[0] if params else "."
+        show_hidden = "-a" in params
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.list_directory(path, show_hidden)
+        helper = await get_helper()
+        result = await helper.list_directory(path, show_hidden)
 
-        if result['success']:
-            items = result.get('items', [])
+        if result["success"]:
+            items = result.get("items", [])
             if not items:
                 yield CommandReturn(text=f"Directory is empty: {result.get('path', path)}")
                 return
 
             lines = [f"**Contents of `{result.get('path', path)}`**\n"]
             for item in items:
-                icon = '📁' if item['type'] == 'directory' else '📄'
-                size_str = f" ({item['size']} bytes)" if item['size'] > 0 else ''
+                icon = "📁" if item["type"] == "directory" else "📄"
+                size_str = f" ({item['size']} bytes)" if item["size"] > 0 else ""
                 lines.append(f"{icon} {item['name']}{size_str}")
 
             lines.append(f"\nTotal: {result.get('count', 0)} items")
-            yield CommandReturn(text='\n'.join(lines))
+            yield CommandReturn(text="\n".join(lines))
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Access denied')}")
 
     @staticmethod
-    async def cat(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def cat(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle file reading."""
         params = context.crt_params
         if not params:
@@ -239,14 +232,12 @@ class LanTARSCommand:
 
         path = params[0]
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.read_file(path)
+        helper = await get_helper()
+        result = await helper.read_file(path)
 
-        if result['success']:
-            content = result.get('content', '')
-            if result.get('is_binary'):
+        if result["success"]:
+            content = result.get("content", "")
+            if result.get("is_binary"):
                 yield CommandReturn(text=f"Binary file: {result.get('path', path)} ({result.get('size', 0)} bytes)")
             elif len(content) > 2000:
                 yield CommandReturn(text=f"```\n{content[:2000]}\n```\n\n... (truncated)")
@@ -256,7 +247,7 @@ class LanTARSCommand:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Access denied')}")
 
     @staticmethod
-    async def write(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def write(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle file writing."""
         params = context.crt_params
         if len(params) < 2:
@@ -264,20 +255,18 @@ class LanTARSCommand:
             return
 
         path = params[0]
-        content = ' '.join(params[1:])
+        content = " ".join(params[1:])
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.write_file(path, content)
+        helper = await get_helper()
+        result = await helper.write_file(path, content)
 
-        if result['success']:
+        if result["success"]:
             yield CommandReturn(text=f"File written: {result.get('path', path)}")
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def open(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def open(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app/URL opening."""
         params = context.crt_params
         if not params:
@@ -285,20 +274,21 @@ class LanTARSCommand:
             return
 
         target = params[0]
-        is_url = target.startswith(('http://', 'https://', 'mailto:', 'tel:'))
+        is_url = target.startswith(("http://", "https://", "mailto:", "tel:"))
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.open_app(target if not is_url else None, url=target if is_url else None)
+        helper = await get_helper()
+        result = await helper.open_app(
+            target if not is_url else None,
+            url=target if is_url else None
+        )
 
-        if result['success']:
+        if result["success"]:
             yield CommandReturn(text=f"Opened: {target}")
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def close(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def close(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app closing."""
         params = context.crt_params
         if not params:
@@ -306,20 +296,18 @@ class LanTARSCommand:
             return
 
         app_name = params[0]
-        force = '-f' in params
+        force = "-f" in params
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.close_app(app_name, force=force)
+        helper = await get_helper()
+        result = await helper.close_app(app_name, force=force)
 
-        if result['success']:
+        if result["success"]:
             yield CommandReturn(text=f"Closed: {app_name}")
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def stop(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def stop(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle task stopping."""
         from components.tools.planner import PlannerTool
 
@@ -331,46 +319,42 @@ class LanTARSCommand:
         yield CommandReturn(text="Task has been stopped.")
 
     @staticmethod
-    async def top(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def top(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app listing."""
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.list_apps()
+        helper = await get_helper()
+        result = await helper.list_apps()
 
-        if result['success']:
-            apps = result.get('apps', [])
+        if result["success"]:
+            apps = result.get("apps", [])
             if not apps:
                 yield CommandReturn(text="No applications running.")
                 return
 
             lines = ["**Running Applications:**\n"]
-            lines.append('\n'.join(f"• {app}" for app in apps))
-            yield CommandReturn(text='\n'.join(lines))
+            lines.append("\n".join(f"• {app}" for app in apps))
+            yield CommandReturn(text="\n".join(lines))
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def info(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def info(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle system info display."""
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.get_system_info()
+        helper = await get_helper()
+        result = await helper.get_system_info()
 
-        if result['success']:
-            info = result.get('info', {})
+        if result["success"]:
+            info = result.get("info", {})
             lines = ["**System Information:**\n"]
             for key, value in info.items():
                 if isinstance(value, dict):
                     continue
                 lines.append(f"• **{key}**: {value}")
-            yield CommandReturn(text='\n'.join(lines))
+            yield CommandReturn(text="\n".join(lines))
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def search(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def search(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle file search."""
         params = context.crt_params
         if not params:
@@ -378,15 +362,13 @@ class LanTARSCommand:
             return
 
         pattern = params[0]
-        path = params[1] if len(params) > 1 else '.'
+        path = params[1] if len(params) > 1 else "."
 
-        from main import LangTARS
-        plugin = LangTARS()
-        await plugin.initialize()
-        result = await plugin.search_files(pattern, path)
+        helper = await get_helper()
+        result = await helper.search_files(pattern, path)
 
-        if result['success']:
-            files = result.get('files', [])
+        if result["success"]:
+            files = result.get("files", [])
             if not files:
                 yield CommandReturn(text=f"No files found matching '{pattern}'")
                 return
@@ -398,12 +380,12 @@ class LanTARSCommand:
             if len(files) > 20:
                 lines.append(f"... and {len(files) - 20} more")
 
-            yield CommandReturn(text='\n'.join(lines))
+            yield CommandReturn(text="\n".join(lines))
         else:
             yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
-    async def default(self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+    async def default(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle default case - show help."""
         help_text = """LangTARS - Control your Mac through IM messages
 
@@ -433,7 +415,6 @@ Examples:
     @staticmethod
     async def auto(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle autonomous task planning using ReAct loop."""
-        # Get the task from params
         params = context.crt_params
         if not params:
             yield CommandReturn(text="""Usage: /tars auto <task description>
@@ -443,17 +424,15 @@ Example:
 """)
             return
 
-        task = ' '.join(params)
+        task = " ".join(params)
 
         # Get config from the command's plugin instance
         config = _self_cmd.plugin.get_config()
-        # Ensure max_iterations is an integer
-        max_iterations = int(config.get('planner_max_iterations', 5) or 5)
+        max_iterations = int(config.get("planner_max_iterations", 5) or 5)
 
-        # Get model: use configured model first, then fall back to auto-detect
-        configured_model_uuid = config.get('planner_model_uuid', '')
+        configured_model_uuid = config.get("planner_model_uuid", "")
 
-        # Auto-detect model: use get_llm_models() to get available models
+        # Get available models
         try:
             models = await _self_cmd.plugin.get_llm_models()
             if not models:
@@ -464,21 +443,18 @@ Go to Pipelines → Configure → Select LLM Model
 """)
                 return
 
-            # If user configured a specific model, validate it exists
             if configured_model_uuid:
-                # Find the configured model
                 for model in models:
-                    if isinstance(model, dict) and model.get('uuid') == configured_model_uuid:
+                    if isinstance(model, dict) and model.get("uuid") == configured_model_uuid:
                         llm_model_uuid = configured_model_uuid
                         break
                 else:
-                    # Model not found, fall back to first available
-                    llm_model_uuid = models[0].get('uuid', '') if isinstance(models[0], dict) else models[0]
+                    first_model = models[0]
+                    llm_model_uuid = first_model.get("uuid", "") if isinstance(first_model, dict) else first_model
             else:
-                # No model configured, use first available
                 first_model = models[0]
                 if isinstance(first_model, dict):
-                    llm_model_uuid = first_model.get('uuid', '')
+                    llm_model_uuid = first_model.get("uuid", "")
                 else:
                     llm_model_uuid = first_model
 
@@ -489,26 +465,25 @@ Go to Pipelines → Configure → Select LLM Model
             yield CommandReturn(text=f"Error: Failed to get available models: {str(e)}")
             return
 
-        # Import and use the plugin instance
+        # Execute the planner
         try:
-            # _self_cmd is the Command object, _self_cmd.plugin is the main LangTARS plugin
-            # plugin needs invoke_llm (from BasePlugin), helper_plugin needs helper methods
-            from components.tools.planner import PlannerTool
-            planner = PlannerTool()
+            from components.tools.planner import PlannerTool, PlannerExecutor
 
-            # Execute the planner - pass _self_cmd.plugin as plugin (has invoke_llm)
-            # and _self_cmd.plugin as helper_plugin (has run_shell, read_file, etc.)
-            result = await planner.execute_task(
+            # Reset state
+            PlannerTool.reset_task_state()
+
+            # Create executor and run with streaming
+            executor = PlannerExecutor()
+            async for partial_result in executor.execute_task_streaming(
                 task=task,
                 max_iterations=max_iterations,
                 llm_model_uuid=llm_model_uuid,
-                plugin=_self_cmd.plugin,  # Main plugin with invoke_llm
+                plugin=_self_cmd.plugin,
                 helper_plugin=_self_cmd.plugin,
                 session=context.session,
                 query_id=context.query_id
-            )
-
-            yield CommandReturn(text=result)
+            ):
+                yield CommandReturn(text=partial_result)
 
         except Exception as e:
             import traceback
