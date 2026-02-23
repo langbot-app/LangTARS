@@ -143,4 +143,6 @@ IM 消息 --> LangBot --> PlannerTool (ReAct 循环) --> 工具 --> Mac 操作
 
 ## 许可证
 
-MIT
+[CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/)
+
+本项目采用知识共享署名-非商业性使用-禁止演绎 4.0 国际许可协议。您可以在署名的前提下分享本项目，但不得用于商业目的，也不得在修改后发布。

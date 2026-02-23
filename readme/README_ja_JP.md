@@ -143,4 +143,6 @@ IM メッセージ --> LangBot --> PlannerTool (ReAct ループ) --> ツール -
 
 ## ライセンス
 
-MIT
+[CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/)
+
+本プロジェクトはクリエイティブ・コモンズ 表示-非営利-改変禁止 4.0 国際ライセンスの下で提供されています。帰属を明示すれば共有できますが、商業利用や改変後の再配布は禁止されています。

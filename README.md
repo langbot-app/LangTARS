@@ -138,4 +138,6 @@ IM Message --> LangBot --> PlannerTool (ReAct Loop) --> Tools --> Mac Actions
 
 ## License
 
-MIT
+[CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/)
+
+This project is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License. You may share it with attribution, but you may not use it commercially or distribute modified versions.
