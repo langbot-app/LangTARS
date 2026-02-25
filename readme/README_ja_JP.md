@@ -90,12 +90,24 @@ AI は以下を行います：
 !tars status
 ```
 
+プラグインの最近ログを表示：
+```
+!tars logs [lines]
+```
+
+直近の auto タスク結果を取得：
+```
+!tars result
+```
+
 ## テストコマンド
 
 これらはテストや直接制御に使用できます：
 
 | コマンド | 説明 |
 |---------|------|
+| `!tars logs [lines]` | プラグインログを表示（最新 N 行） |
+| `!tars result` | 直近の auto タスク結果を取得 |
 | `!tars shell <command>` | シェルコマンドを実行 |
 | `!tars ps [filter]` | 実行中のプロセスを一覧表示 |
 | `!tars kill <pid\|name>` | プロセスを終了 |

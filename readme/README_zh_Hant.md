@@ -89,12 +89,24 @@ AI 將：
 !tars status
 ```
 
+查看外掛最近日誌：
+```
+!tars logs [lines]
+```
+
+取得最近一次 auto 任務結果：
+```
+!tars result
+```
+
 ## 測試命令
 
 這些命令可用於測試和直接控制：
 
 | 命令 | 描述 |
 |------|------|
+| `!tars logs [lines]` | 查看外掛日誌（最近 N 行） |
+| `!tars result` | 取得最近一次 auto 任務結果 |
 | `!tars shell <command>` | 執行 shell 命令 |
 | `!tars ps [filter]` | 列出執行中的程序 |
 | `!tars kill <pid\|name>` | 終止程序 |

@@ -90,12 +90,24 @@ AI 将：
 !tars status
 ```
 
+查看插件最近日志：
+```
+!tars logs [lines]
+```
+
+获取最近一次 auto 任务结果：
+```
+!tars result
+```
+
 ## 测试命令
 
 这些命令可用于测试和直接控制：
 
 | 命令 | 描述 |
 |------|------|
+| `!tars logs [lines]` | 查看插件日志（最近 N 行） |
+| `!tars result` | 获取最近一次 auto 任务结果 |
 | `!tars shell <command>` | 执行 shell 命令 |
 | `!tars ps [filter]` | 列出运行中的进程 |
 | `!tars kill <pid\|name>` | 终止进程 |

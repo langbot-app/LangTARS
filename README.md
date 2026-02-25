@@ -77,6 +77,16 @@ Check task status:
 !tars status
 ```
 
+View recent plugin logs:
+```
+!tars logs [lines]
+```
+
+Get the last auto task result:
+```
+!tars result
+```
+
 ## Testing Commands
 
 These commands are available for testing and direct control:
@@ -84,6 +94,8 @@ These commands are available for testing and direct control:
 | Command | Description |
 |---------|-------------|
 | `!tars auto <task>` | Autonomous task planning (AI-powered) |
+| `!tars logs [lines]` | View plugin logs (latest N lines) |
+| `!tars result` | Get last auto task result |
 | `!tars shell <command>` | Execute a shell command |
 | `!tars ps [filter]` | List running processes |
 | `!tars kill <pid\|name>` | Kill a process |
