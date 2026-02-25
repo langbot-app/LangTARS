@@ -487,10 +487,10 @@ Examples:
         """Handle autonomous task planning using ReAct loop."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="""Usage: /tars auto <task description>
+            yield CommandReturn(text="""Usage: !tars auto <task description>
 
 Example:
-  /tars auto Open Safari and search for AI news
+  !tars auto Open Safari and search for AI news
 """)
             return
 
@@ -498,7 +498,7 @@ Example:
         from components.tools.planner import PlannerTool, TrueSubprocessPlanner
 
         if TrueSubprocessPlanner.is_running():
-            yield CommandReturn(text="⚠️ A task is already running. Use /tars stop to stop it first.")
+            yield CommandReturn(text="⚠️ A task is already running. Use !tars stop to stop it first.")
             return
 
         task = " ".join(params)
@@ -580,7 +580,7 @@ Go to Pipelines → Configure → Select LLM Model
             BackgroundTaskManager._bg_task = bg_task
             BackgroundTaskManager._last_result = None
 
-            yield CommandReturn(text="🚀 Task started in background. Use /tars stop to cancel.\n")
+            yield CommandReturn(text="🚀 Task started in background. Use !tars stop to cancel.\n")
 
         except Exception as e:
             import traceback

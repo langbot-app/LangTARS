@@ -41,21 +41,21 @@ class LangTARS(Command, BasePlugin):
 
         # Register subcommands - delegate to LanTARSCommand
         self.registered_subcommands = {
-            "info": Subcommand(subcommand=LanTARSCommand.info, help="Get system info", usage="/tars info", aliases=["system"]),
-            "shell": Subcommand(subcommand=LanTARSCommand.shell, help="Execute shell", usage="/tars shell <cmd>", aliases=["sh", "exec"]),
-            "ps": Subcommand(subcommand=LanTARSCommand.ps, help="List processes", usage="/tars ps [filter]", aliases=["processes"]),
-            "ls": Subcommand(subcommand=LanTARSCommand.ls, help="List directory", usage="/tars ls [path]", aliases=["dir"]),
-            "cat": Subcommand(subcommand=LanTARSCommand.cat, help="Read file", usage="/tars cat <path>", aliases=["read"]),
-            "kill": Subcommand(subcommand=LanTARSCommand.kill, help="Kill process", usage="/tars kill <pid|name>", aliases=[]),
-            "open": Subcommand(subcommand=LanTARSCommand.open, help="Open app/URL", usage="/tars open <app|url>", aliases=["launch"]),
-            "close": Subcommand(subcommand=LanTARSCommand.close, help="Close app", usage="/tars close <app>", aliases=["quit"]),
-            "apps": Subcommand(subcommand=LanTARSCommand.top, help="List apps", usage="/tars apps", aliases=["top"]),
-            "stop": Subcommand(subcommand=LanTARSCommand.stop, help="Stop task", usage="/tars stop", aliases=["pause"]),
-            "config": Subcommand(subcommand=self.cmd_config, help="Config", usage="/tars config [save]", aliases=["cfg"]),
-            "search": Subcommand(subcommand=LanTARSCommand.search, help="Search files", usage="/tars search <pattern>", aliases=["find"]),
-            "write": Subcommand(subcommand=LanTARSCommand.write, help="Write file", usage="/tars write <path> <content>", aliases=["save"]),
-            "auto": Subcommand(subcommand=LanTARSCommand.auto, help="AI planning", usage="/tars auto <task>", aliases=["plan", "run"]),
-            "*": Subcommand(subcommand=LanTARSCommand.default, help="Help", usage="/tars help", aliases=[]),
+            "info": Subcommand(subcommand=LanTARSCommand.info, help="Get system info", usage="!tars info", aliases=["system"]),
+            "shell": Subcommand(subcommand=LanTARSCommand.shell, help="Execute shell", usage="!tars shell <cmd>", aliases=["sh", "exec"]),
+            "ps": Subcommand(subcommand=LanTARSCommand.ps, help="List processes", usage="!tars ps [filter]", aliases=["processes"]),
+            "ls": Subcommand(subcommand=LanTARSCommand.ls, help="List directory", usage="!tars ls [path]", aliases=["dir"]),
+            "cat": Subcommand(subcommand=LanTARSCommand.cat, help="Read file", usage="!tars cat <path>", aliases=["read"]),
+            "kill": Subcommand(subcommand=LanTARSCommand.kill, help="Kill process", usage="!tars kill <pid|name>", aliases=[]),
+            "open": Subcommand(subcommand=LanTARSCommand.open, help="Open app/URL", usage="!tars open <app|url>", aliases=["launch"]),
+            "close": Subcommand(subcommand=LanTARSCommand.close, help="Close app", usage="!tars close <app>", aliases=["quit"]),
+            "apps": Subcommand(subcommand=LanTARSCommand.top, help="List apps", usage="!tars apps", aliases=["top"]),
+            "stop": Subcommand(subcommand=LanTARSCommand.stop, help="Stop task", usage="!tars stop", aliases=["pause"]),
+            "config": Subcommand(subcommand=self.cmd_config, help="Config", usage="!tars config [save]", aliases=["cfg"]),
+            "search": Subcommand(subcommand=LanTARSCommand.search, help="Search files", usage="!tars search <pattern>", aliases=["find"]),
+            "write": Subcommand(subcommand=LanTARSCommand.write, help="Write file", usage="!tars write <path> <content>", aliases=["save"]),
+            "auto": Subcommand(subcommand=LanTARSCommand.auto, help="AI planning", usage="!tars auto <task>", aliases=["plan", "run"]),
+            "*": Subcommand(subcommand=LanTARSCommand.default, help="Help", usage="!tars help", aliases=[]),
         }
 
     # ========== Config ==========
