@@ -8,13 +8,13 @@ import logging
 import os
 import time
 import multiprocessing
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from components.helpers.logging_setup import setup_langtars_file_logging
+
+# Ensure root logger has stream + file handlers even if host already configured logging
+setup_langtars_file_logging()
 logger = logging.getLogger(__name__)
 
 from langbot_plugin.api.definition.components.tool.tool import Tool

@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+from components.helpers.logging_setup import setup_langtars_file_logging
+
+# Ensure root logger has stream + file handlers even if host already configured logging
+setup_langtars_file_logging()
 logger = logging.getLogger(__name__)
 
 from langbot_plugin.api.definition.components.command.command import Command, Subcommand
@@ -51,6 +54,7 @@ class LangTARS(Command, BasePlugin):
             "close": Subcommand(subcommand=LanTARSCommand.close, help="Close app", usage="!tars close <app>", aliases=["quit"]),
             "apps": Subcommand(subcommand=LanTARSCommand.top, help="List apps", usage="!tars apps", aliases=["top"]),
             "stop": Subcommand(subcommand=LanTARSCommand.stop, help="Stop task", usage="!tars stop", aliases=["pause"]),
+            "logs": Subcommand(subcommand=LanTARSCommand.logs, help="View logs", usage="!tars logs [lines]", aliases=["log"]),
             "config": Subcommand(subcommand=self.cmd_config, help="Config", usage="!tars config [save]", aliases=["cfg"]),
             "search": Subcommand(subcommand=LanTARSCommand.search, help="Search files", usage="!tars search <pattern>", aliases=["find"]),
             "write": Subcommand(subcommand=LanTARSCommand.write, help="Write file", usage="!tars write <path> <content>", aliases=["save"]),

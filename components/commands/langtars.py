@@ -386,6 +386,59 @@ class LanTARSCommand:
         yield CommandReturn(text="🛑 Stop signal sent.\n\nIf the task doesn't stop, run in terminal:\n  touch /tmp/langtars_user_stop")
 
     @staticmethod
+    async def logs(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Handle log viewing."""
+        from collections import deque
+        from pathlib import Path
+
+        # Get number of lines to show (default 50)
+        params = context.crt_params
+        try:
+            lines = int(params[0]) if params else 50
+        except ValueError:
+            lines = 50
+
+        def _tail_file(path: Path, max_lines: int) -> str:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                return "".join(deque(f, maxlen=max_lines)).strip()
+
+        log_files = [
+            Path.home() / ".langtars" / "logs" / "langtars.log",
+            Path("/tmp/langtars.log"),
+            Path("/tmp/langtars_planner.log"),
+            Path.home() / "Library" / "Logs" / "langtars.log",
+        ]
+
+        output_blocks = []
+        for log_file in log_files:
+            if not log_file.exists() or not log_file.is_file():
+                continue
+            try:
+                content = _tail_file(log_file, lines)
+            except Exception as e:
+                output_blocks.append(f"📄 Logs from {log_file}:\n(read failed: {e})")
+                continue
+
+            if content:
+                output_blocks.append(f"📄 Logs from {log_file}:\n{content}")
+
+        if not output_blocks:
+            yield CommandReturn(
+                text=(
+                    "📋 No logs found.\n\n"
+                    "Expected primary log file:\n"
+                    f"{Path.home() / '.langtars' / 'logs' / 'langtars.log'}\n\n"
+                    "Please run any !tars command once, then retry `!tars logs`."
+                )
+            )
+            return
+
+        full_log = "\n\n".join(output_blocks)
+        if len(full_log) > 8000:
+            full_log = "...(truncated)\n" + full_log[-7800:]
+        yield CommandReturn(text=full_log)
+
+    @staticmethod
     async def top(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app listing."""
         helper = await get_helper()
@@ -495,9 +548,9 @@ Example:
             return
 
         # Check if a task is already running
-        from components.tools.planner import PlannerTool, TrueSubprocessPlanner
+        from components.tools.planner import PlannerTool, TrueSubprocessPlanner, PlannerExecutor, SubprocessPlanner
 
-        if TrueSubprocessPlanner.is_running():
+        if BackgroundTaskManager.is_running() or TrueSubprocessPlanner.is_running():
             yield CommandReturn(text="⚠️ A task is already running. Use !tars stop to stop it first.")
             return
 
@@ -548,12 +601,36 @@ Go to Pipelines → Configure → Select LLM Model
         # Start task in background and immediately return
         # This allows stop command to be processed while task runs
         try:
-            # Use true subprocess mode - allows stop command to directly kill the process
-            # But run it in background so stop command can be processed
-            task_started = False
-
             async def run_task():
-                nonlocal task_started
+                try:
+                    # Keep the run file semantics so stop checks stay consistent
+                    SubprocessPlanner._create_run_file()
+
+                    executor = PlannerExecutor()
+                    async for partial_result in executor.execute_task_streaming(
+                        task=task,
+                        max_iterations=max_iterations,
+                        llm_model_uuid=llm_model_uuid,
+                        plugin=_self_cmd.plugin,
+                        helper_plugin=_self_cmd.plugin,
+                        session=context.session,
+                        query_id=context.query_id
+                    ):
+                        # Store latest result for stop command to retrieve
+                        BackgroundTaskManager._last_result = partial_result
+                        # Small delay to allow stop command to be processed
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    BackgroundTaskManager._last_result = "Task cancelled by user."
+                    raise
+                except Exception as e:
+                    import traceback
+                    BackgroundTaskManager._last_result = f"Error: {str(e)}\n{traceback.format_exc()}"
+                finally:
+                    SubprocessPlanner._remove_run_file()
+                    BackgroundTaskManager._task_running = False
+
+            async def run_subprocess_task():
                 try:
                     async for partial_result in TrueSubprocessPlanner.execute_in_subprocess(
                         task=task,
@@ -574,13 +651,20 @@ Go to Pipelines → Configure → Select LLM Model
                 finally:
                     BackgroundTaskManager._task_running = False
 
-            # Start background task
-            bg_task = asyncio.create_task(run_task())
+            # NOTE:
+            # LLM invocation depends on plugin_runtime_handler from the current runtime.
+            # This handler is not available in standalone subprocess-created plugin instances.
+            # Therefore default to in-process background execution; keep subprocess path optional.
+            use_true_subprocess = bool(config.get("planner_use_true_subprocess", False))
+            bg_task = asyncio.create_task(run_subprocess_task() if use_true_subprocess else run_task())
             BackgroundTaskManager._task_running = True
             BackgroundTaskManager._bg_task = bg_task
             BackgroundTaskManager._last_result = None
 
-            yield CommandReturn(text="🚀 Task started in background. Use !tars stop to cancel.\n")
+            if use_true_subprocess:
+                yield CommandReturn(text="🚀 Task started in background (subprocess mode). Use !tars stop to cancel.\n")
+            else:
+                yield CommandReturn(text="🚀 Task started in background. Use !tars stop to cancel.\n")
 
         except Exception as e:
             import traceback
