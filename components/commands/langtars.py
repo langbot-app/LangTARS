@@ -25,91 +25,91 @@ class LangTARS(Command):
         self.registered_subcommands["shell"] = Subcommand(
             subcommand=LanTARSCommand.shell,
             help="Execute a shell command",
-            usage="/tars shell <command>",
+            usage="!tars shell <command>",
             aliases=["sh", "exec"],
         )
 
         self.registered_subcommands["ps"] = Subcommand(
             subcommand=LanTARSCommand.ps,
             help="List running processes",
-            usage="/tars ps [filter] [limit]",
+            usage="!tars ps [filter] [limit]",
             aliases=["processes", "process"],
         )
 
         self.registered_subcommands["kill"] = Subcommand(
             subcommand=LanTARSCommand.kill,
             help="Kill a process by name or PID",
-            usage="/tars kill <name|PID> [-f]",
+            usage="!tars kill <name|PID> [-f]",
             aliases=[],
         )
 
         self.registered_subcommands["ls"] = Subcommand(
             subcommand=LanTARSCommand.ls,
             help="List directory contents",
-            usage="/tars ls [path] [-a]",
+            usage="!tars ls [path] [-a]",
             aliases=["list", "dir"],
         )
 
         self.registered_subcommands["cat"] = Subcommand(
             subcommand=LanTARSCommand.cat,
             help="Read file content",
-            usage="/tars cat <path>",
+            usage="!tars cat <path>",
             aliases=["read", "view"],
         )
 
         self.registered_subcommands["write"] = Subcommand(
             subcommand=LanTARSCommand.write,
             help="Write content to a file",
-            usage="/tars write <path> <content>",
+            usage="!tars write <path> <content>",
             aliases=["save", "create"],
         )
 
         self.registered_subcommands["open"] = Subcommand(
             subcommand=LanTARSCommand.open,
             help="Open an application or URL",
-            usage="/tars open <app|url>",
+            usage="!tars open <app|url>",
             aliases=["launch", "start"],
         )
 
         self.registered_subcommands["close"] = Subcommand(
             subcommand=LanTARSCommand.close,
             help="Close an application",
-            usage="/tars close <app_name> [-f]",
+            usage="!tars close <app_name> [-f]",
             aliases=["quit"],
         )
 
         self.registered_subcommands["stop"] = Subcommand(
             subcommand=LanTARSCommand.stop,
             help="Stop the current running task",
-            usage="/tars stop",
+            usage="!tars stop",
             aliases=["pause", "cancel"],
         )
 
         self.registered_subcommands["top"] = Subcommand(
             subcommand=LanTARSCommand.top,
             help="Show running applications",
-            usage="/tars top",
+            usage="!tars top",
             aliases=["apps"],
         )
 
         self.registered_subcommands["info"] = Subcommand(
             subcommand=LanTARSCommand.info,
             help="Show system information",
-            usage="/tars info",
+            usage="!tars info",
             aliases=["system", "status"],
         )
 
         self.registered_subcommands["search"] = Subcommand(
             subcommand=LanTARSCommand.search,
             help="Search for files",
-            usage="/tars search <pattern> [path]",
+            usage="!tars search <pattern> [path]",
             aliases=["find"],
         )
 
         self.registered_subcommands["auto"] = Subcommand(
             subcommand=LanTARSCommand.auto,
             help="Autonomous task planning (AI-powered)",
-            usage="/tars auto <task description>",
+            usage="!tars auto <task description>",
             aliases=["plan", "run"],
         )
 
@@ -117,7 +117,7 @@ class LangTARS(Command):
         self.registered_subcommands["*"] = Subcommand(
             subcommand=LanTARSCommand.default,
             help="Show help or handle default",
-            usage="/tars help",
+            usage="!tars help",
             aliases=[],
         )
 
@@ -131,7 +131,7 @@ class LanTARSCommand:
         """Handle shell command execution."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="Usage: /tars shell <command>")
+            yield CommandReturn(text="Usage: !tars shell <command>")
             return
 
         command = " ".join(params)
@@ -181,7 +181,7 @@ class LanTARSCommand:
         """Handle process killing."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="Usage: /tars kill <name|PID> [-f]")
+            yield CommandReturn(text="Usage: !tars kill <name|PID> [-f]")
             return
 
         target = params[0]
@@ -227,7 +227,7 @@ class LanTARSCommand:
         """Handle file reading."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="Usage: /tars cat <path>")
+            yield CommandReturn(text="Usage: !tars cat <path>")
             return
 
         path = params[0]
@@ -251,7 +251,7 @@ class LanTARSCommand:
         """Handle file writing."""
         params = context.crt_params
         if len(params) < 2:
-            yield CommandReturn(text="Usage: /tars write <path> <content>")
+            yield CommandReturn(text="Usage: !tars write <path> <content>")
             return
 
         path = params[0]
@@ -270,7 +270,7 @@ class LanTARSCommand:
         """Handle app/URL opening."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="Usage: /tars open <app_name|url>")
+            yield CommandReturn(text="Usage: !tars open <app_name|url>")
             return
 
         target = params[0]
@@ -292,7 +292,7 @@ class LanTARSCommand:
         """Handle app closing."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="Usage: /tars close <app_name> [-f]")
+            yield CommandReturn(text="Usage: !tars close <app_name> [-f]")
             return
 
         app_name = params[0]
@@ -309,14 +309,26 @@ class LanTARSCommand:
     @staticmethod
     async def stop(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle task stopping."""
-        from components.tools.planner import PlannerTool
+        import logging
+        logger = logging.getLogger(__name__)
 
-        if PlannerTool.is_task_stopped():
-            yield CommandReturn(text="Task is already stopped.")
+        from components.tools.planner import PlannerTool, TrueSubprocessPlanner, SubprocessPlanner
+
+        logger.warning(f"[STOP] is_running check: process={TrueSubprocessPlanner._process}, pid={TrueSubprocessPlanner._pid}")
+
+        # First, try to kill the subprocess directly
+        if TrueSubprocessPlanner.is_running():
+            logger.warning("[STOP] Subprocess running, killing...")
+            await TrueSubprocessPlanner.kill_process()
+            yield CommandReturn(text="🛑 Task has been stopped (subprocess killed).")
             return
 
+        # Fallback: set stop flag and remove run file
+        logger.warning("[STOP] No subprocess running, using fallback")
         PlannerTool.stop_task()
-        yield CommandReturn(text="Task has been stopped.")
+        SubprocessPlanner._remove_run_file()
+
+        yield CommandReturn(text="🛑 Stop signal sent.\n\nIf the task doesn't stop, run in terminal:\n  touch /tmp/langtars_user_stop")
 
     @staticmethod
     async def top(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
@@ -358,7 +370,7 @@ class LanTARSCommand:
         """Handle file search."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="Usage: /tars search <pattern> [path]")
+            yield CommandReturn(text="Usage: !tars search <pattern> [path]")
             return
 
         pattern = params[0]
@@ -390,25 +402,28 @@ class LanTARSCommand:
         help_text = """LangTARS - Control your Mac through IM messages
 
 Available commands:
-  /tars shell <command>   - Execute shell command
-  /tars ps [filter]       - List running processes
-  /tars kill <pid|name>   - Kill a process
-  /tars ls [path]         - List directory contents
-  /tars cat <path>        - Read file content
-  /tars write <path> <content> - Write file
-  /tars open <app|url>   - Open an application or URL
-  /tars close <app>      - Close an application
-  /tars top              - List running applications
-  /tars info             - Show system information
-  /tars search <pattern> - Search files
-  /tars auto <task>      - Autonomous task planning (AI-powered)
+  !tars shell <command>   - Execute shell command
+  !tars ps [filter]       - List running processes
+  !tars kill <pid|name>   - Kill a process
+  !tars ls [path]         - List directory contents
+  !tars cat <path>        - Read file content
+  !tars write <path> <content> - Write file
+  !tars open <app|url>   - Open an application or URL
+  !tars close <app>      - Close an application
+  !tars top              - List running applications
+  !tars info             - Show system information
+  !tars search <pattern> - Search files
+  !tars auto <task>      - Autonomous task planning (AI-powered)
+
+To stop a running task, run in terminal:
+  touch /tmp/langtars_user_stop
 
 Examples:
-  /tars info
-  /tars shell ls -la
-  /tars ps python
-  /tars open Safari
-  /tars auto Open Safari and search for AI news
+  !tars info
+  !tars shell ls -la
+  !tars ps python
+  !tars open Safari
+  !tars auto Open Safari and search for AI news
 """
         yield CommandReturn(text=help_text)
 
@@ -417,10 +432,10 @@ Examples:
         """Handle autonomous task planning using ReAct loop."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="""Usage: /tars auto <task description>
+            yield CommandReturn(text="""Usage: !tars auto <task description>
 
 Example:
-  /tars auto Open Safari and search for AI news
+  !tars auto Open Safari and search for AI news
 """)
             return
 
@@ -465,16 +480,21 @@ Go to Pipelines → Configure → Select LLM Model
             yield CommandReturn(text=f"Error: Failed to get available models: {str(e)}")
             return
 
-        # Execute the planner
+        # Check if a task is already running
+        from components.tools.planner import PlannerTool, TrueSubprocessPlanner
+
+        # Check if subprocess is actually running
+        if TrueSubprocessPlanner.is_running():
+            yield CommandReturn(text="⚠️ A task is already running. Use !tars stop to stop it first.")
+            return
+
+        # Always reset state before starting a new task
+        PlannerTool.reset_task_state()
+
+        # Execute the planner in true subprocess for better stop support
         try:
-            from components.tools.planner import PlannerTool, PlannerExecutor
-
-            # Reset state
-            PlannerTool.reset_task_state()
-
-            # Create executor and run with streaming
-            executor = PlannerExecutor()
-            async for partial_result in executor.execute_task_streaming(
+            # Use true subprocess mode - allows stop command to directly kill the process
+            async for partial_result in TrueSubprocessPlanner.execute_in_subprocess(
                 task=task,
                 max_iterations=max_iterations,
                 llm_model_uuid=llm_model_uuid,
