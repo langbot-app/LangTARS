@@ -10,7 +10,6 @@ from typing import Any, AsyncGenerator
 from langbot_plugin.api.definition.components.command.command import Command, Subcommand
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext, CommandReturn
 from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain
-
 from components.helpers.plugin import get_helper
 
 logger = logging.getLogger(__name__)
@@ -26,6 +25,7 @@ class BackgroundTaskManager:
     _bg_task: asyncio.Task | None = None
     _task_running: bool = False
     _last_result: str | None = None
+    _pending_result: str | None = None
 
     @classmethod
     def is_running(cls) -> bool:
@@ -36,6 +36,11 @@ class BackgroundTaskManager:
     def get_last_result(cls) -> str | None:
         """Get the last result from the background task."""
         return cls._last_result
+
+    @classmethod
+    def get_pending_result(cls) -> str | None:
+        """Get pending result that failed to push to chat."""
+        return cls._pending_result
 
     @classmethod
     async def stop(cls) -> bool:
@@ -129,6 +134,19 @@ class LangTARS(Command):
             aliases=["pause", "cancel"],
         )
 
+        self.registered_subcommands["logs"] = Subcommand(
+            subcommand=LanTARSCommand.logs,
+            help="View plugin logs",
+            usage="!tars logs [lines]",
+            aliases=["log"],
+        )
+        self.registered_subcommands["result"] = Subcommand(
+            subcommand=LanTARSCommand.result,
+            help="Get last auto task result",
+            usage="!tars result",
+            aliases=["last"],
+        )
+
         self.registered_subcommands["top"] = Subcommand(
             subcommand=LanTARSCommand.top,
             help="Show running applications",
@@ -164,6 +182,17 @@ class LangTARS(Command):
             usage="!tars help",
             aliases=[],
         )
+
+    async def _execute(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Inject pending auto-task result before executing next !tars command."""
+        next_cmd = context.crt_params[0] if context.crt_params else ""
+        if next_cmd != "result":
+            pending = BackgroundTaskManager.get_pending_result()
+            if pending:
+                BackgroundTaskManager._pending_result = None
+                yield CommandReturn(text=f"📬 Last task result (auto):\n\n{pending}")
+        async for return_value in super()._execute(context):
+            yield return_value
 
 
 # Separate class for command handlers - uses singleton PluginHelper
@@ -434,9 +463,30 @@ class LanTARSCommand:
             return
 
         full_log = "\n\n".join(output_blocks)
-        if len(full_log) > 8000:
-            full_log = "...(truncated)\n" + full_log[-7800:]
+        # Keep response size conservative for IM platform limits.
+        if len(full_log) > 3200:
+            full_log = "...(truncated)\n" + full_log[-3000:]
         yield CommandReturn(text=full_log)
+
+    @staticmethod
+    async def result(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Get last background task result."""
+        if BackgroundTaskManager.is_running():
+            yield CommandReturn(text="⏳ Task is still running. Please try again in a moment.")
+            return
+
+        pending = BackgroundTaskManager.get_pending_result()
+        if pending:
+            BackgroundTaskManager._pending_result = None
+            yield CommandReturn(text=f"📬 Last task result (fallback):\n\n{pending}")
+            return
+
+        last = BackgroundTaskManager.get_last_result()
+        if last:
+            yield CommandReturn(text=f"📄 Last task result:\n\n{last}")
+            return
+
+        yield CommandReturn(text="No task result found.")
 
     @staticmethod
     async def top(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
@@ -519,6 +569,8 @@ Available commands:
   !tars open <app|url>   - Open an application or URL
   !tars close <app>      - Close an application
   !tars top              - List running applications
+  !tars logs [lines]     - View recent logs
+  !tars result           - Get last auto task result
   !tars info             - Show system information
   !tars search <pattern> - Search files
   !tars auto <task>      - Autonomous task planning (AI-powered)
@@ -601,6 +653,88 @@ Go to Pipelines → Configure → Select LLM Model
         # Start task in background and immediately return
         # This allows stop command to be processed while task runs
         try:
+            bot_uuid: str | None = None
+            try:
+                bot_uuid = await context.get_bot_uuid()
+            except Exception as e:
+                logger.warning(f"Failed to get bot uuid for background send: {e}")
+            if not bot_uuid:
+                try:
+                    conversation = getattr(context.session, "using_conversation", None)
+                    if conversation and getattr(conversation, "bot_uuid", None):
+                        bot_uuid = str(conversation.bot_uuid)
+                except Exception:
+                    pass
+            target_type = context.session.launcher_type.value
+            raw_target_id = context.session.launcher_id
+
+            def _candidate_target_ids(raw_id: Any) -> list[Any]:
+                ids: list[Any] = []
+                if raw_id is None:
+                    return ids
+                ids.append(raw_id)
+                sid = str(raw_id)
+                if sid not in [str(x) for x in ids]:
+                    ids.append(sid)
+                if sid.isdigit():
+                    try:
+                        iid = int(sid)
+                        if str(iid) not in [str(x) for x in ids]:
+                            ids.append(iid)
+                    except Exception:
+                        pass
+                return ids
+
+            async def _reply_background(text: str) -> None:
+                """Queue task result for auto-show on next !tars command."""
+                try:
+                    if not text:
+                        return
+                    safe_text = text if len(text) <= 3000 else ("...(truncated)\n" + text[-2800:])
+                    BackgroundTaskManager._pending_result = safe_text
+                    logger.info("Background task result queued. It will auto-show on next !tars command.")
+                except Exception as e:
+                    BackgroundTaskManager._pending_result = text if len(text) <= 3000 else ("...(truncated)\n" + text[-2800:])
+                    logger.warning(f"Failed to queue background result: {e}")
+
+            async def _auto_execute_result_reply() -> None:
+                """Auto-run result behavior when task ends via send_message (query-independent)."""
+                pending = BackgroundTaskManager.get_pending_result()
+                if pending:
+                    msg = f"📬 Last task result (fallback):\n\n{pending}"
+                else:
+                    last = BackgroundTaskManager.get_last_result()
+                    if last:
+                        msg = f"📄 Last task result:\n\n{last}"
+                    else:
+                        msg = "No task result found."
+                try:
+                    if not bot_uuid:
+                        raise RuntimeError("missing bot_uuid")
+                    sent = False
+                    errors: list[str] = []
+                    for cid in _candidate_target_ids(raw_target_id):
+                        try:
+                            await _self_cmd.plugin.send_message(
+                                bot_uuid=bot_uuid,
+                                target_type=target_type,
+                                target_id=cid,
+                                message_chain=MessageChain([Plain(text=msg)]),
+                            )
+                            logger.info(f"Auto result sent via send_message to {target_type}:{cid!r}")
+                            sent = True
+                            break
+                        except Exception as send_err:
+                            errors.append(f"{cid!r}: {send_err}")
+                    if sent:
+                        # Only clear pending after a successful auto send.
+                        if pending:
+                            BackgroundTaskManager._pending_result = None
+                    else:
+                        raise RuntimeError(" | ".join(errors) if errors else "unknown send error")
+                except Exception as e:
+                    logger.warning(f"Auto result send failed, keep pending for next !tars command: {e}")
+
             async def run_task():
                 try:
                     # Keep the run file semantics so stop checks stay consistent
@@ -620,12 +754,21 @@ Go to Pipelines → Configure → Select LLM Model
                         BackgroundTaskManager._last_result = partial_result
                         # Small delay to allow stop command to be processed
                         await asyncio.sleep(0.1)
+                    if BackgroundTaskManager._last_result:
+                        await _reply_background(f"✅ Task completed.\n\n{BackgroundTaskManager._last_result}")
+                    else:
+                        await _reply_background("✅ Task completed.")
+                    await _auto_execute_result_reply()
                 except asyncio.CancelledError:
                     BackgroundTaskManager._last_result = "Task cancelled by user."
+                    await _reply_background("🛑 Task cancelled by user.")
+                    await _auto_execute_result_reply()
                     raise
                 except Exception as e:
                     import traceback
                     BackgroundTaskManager._last_result = f"Error: {str(e)}\n{traceback.format_exc()}"
+                    await _reply_background(f"❌ Task error:\n{BackgroundTaskManager._last_result}")
+                    await _auto_execute_result_reply()
                 finally:
                     SubprocessPlanner._remove_run_file()
                     BackgroundTaskManager._task_running = False
@@ -645,9 +788,16 @@ Go to Pipelines → Configure → Select LLM Model
                         BackgroundTaskManager._last_result = partial_result
                         # Small delay to allow stop command to be processed
                         await asyncio.sleep(0.1)
+                    if BackgroundTaskManager._last_result:
+                        await _reply_background(BackgroundTaskManager._last_result)
+                    else:
+                        await _reply_background("✅ Task completed.")
+                    await _auto_execute_result_reply()
                 except Exception as e:
                     import traceback
                     BackgroundTaskManager._last_result = f"Error: {str(e)}\n{traceback.format_exc()}"
+                    await _reply_background(f"❌ Task error:\n{BackgroundTaskManager._last_result}")
+                    await _auto_execute_result_reply()
                 finally:
                     BackgroundTaskManager._task_running = False
 
@@ -656,10 +806,11 @@ Go to Pipelines → Configure → Select LLM Model
             # This handler is not available in standalone subprocess-created plugin instances.
             # Therefore default to in-process background execution; keep subprocess path optional.
             use_true_subprocess = bool(config.get("planner_use_true_subprocess", False))
+            BackgroundTaskManager._last_result = None
+            BackgroundTaskManager._pending_result = None
             bg_task = asyncio.create_task(run_subprocess_task() if use_true_subprocess else run_task())
             BackgroundTaskManager._task_running = True
             BackgroundTaskManager._bg_task = bg_task
-            BackgroundTaskManager._last_result = None
 
             if use_true_subprocess:
                 yield CommandReturn(text="🚀 Task started in background (subprocess mode). Use !tars stop to cancel.\n")

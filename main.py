@@ -55,6 +55,7 @@ class LangTARS(Command, BasePlugin):
             "apps": Subcommand(subcommand=LanTARSCommand.top, help="List apps", usage="!tars apps", aliases=["top"]),
             "stop": Subcommand(subcommand=LanTARSCommand.stop, help="Stop task", usage="!tars stop", aliases=["pause"]),
             "logs": Subcommand(subcommand=LanTARSCommand.logs, help="View logs", usage="!tars logs [lines]", aliases=["log"]),
+            "result": Subcommand(subcommand=LanTARSCommand.result, help="Get last auto task result", usage="!tars result", aliases=["last"]),
             "config": Subcommand(subcommand=self.cmd_config, help="Config", usage="!tars config [save]", aliases=["cfg"]),
             "search": Subcommand(subcommand=LanTARSCommand.search, help="Search files", usage="!tars search <pattern>", aliases=["find"]),
             "write": Subcommand(subcommand=LanTARSCommand.write, help="Write file", usage="!tars write <path> <content>", aliases=["save"]),
