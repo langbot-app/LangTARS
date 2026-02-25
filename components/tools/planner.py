@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
-from typing import Any
+import multiprocessing
+from typing import Any, AsyncGenerator
 
 # Configure logging
 logging.basicConfig(
@@ -55,23 +57,25 @@ class PlannerTool(Tool):
     @classmethod
     def stop_task(cls, task_id: str = "default") -> bool:
         """Stop the current running task by killing the subprocess"""
+        logger.warning(f"stop_task() called, setting _task_stopped=True")
         cls._task_stopped = True
+        logger.warning(f"stop_task() completed, _task_stopped={cls._task_stopped}")
 
         # Signal the stop event if it exists
         if cls._stop_event:
             try:
                 cls._stop_event.set()
-                logger.debug("Stop event set")
+                logger.warning("Stop event set")
             except Exception as e:
-                logger.debug(f"Error setting stop event: {e}")
+                logger.warning(f"Error setting stop event: {e}")
 
         # Try to cancel the asyncio task if running
         if cls._current_asyncio_task and not cls._current_asyncio_task.done():
             try:
                 cls._current_asyncio_task.cancel()
-                logger.debug("Cancelled asyncio task")
+                logger.warning("Cancelled asyncio task")
             except Exception as e:
-                logger.debug(f"Error cancelling task: {e}")
+                logger.warning(f"Error cancelling task: {e}")
 
         # Kill the subprocess if running
         if cls._planner_process:
@@ -99,8 +103,16 @@ class PlannerTool(Tool):
 
     @classmethod
     def is_task_stopped(cls) -> bool:
-        """Check if the current task has been stopped"""
-        return cls._task_stopped
+        """Check if the current task has been stopped (checks memory flag + user stop file)"""
+        # Check memory flag first
+        if cls._task_stopped:
+            return True
+        # Also check if user created the stop file
+        if SubprocessPlanner._check_user_stop_file():
+            cls._task_stopped = True
+            SubprocessPlanner._clear_user_stop_file()  # Clear the file after detecting
+            return True
+        return False
 
     @classmethod
     def reset_task_state(cls) -> None:
@@ -112,6 +124,8 @@ class PlannerTool(Tool):
         cls._subprocess = None
         cls._planner_process = None
         cls._stop_event = asyncio.Event()
+        # Clear user stop file when starting a new task
+        SubprocessPlanner._clear_user_stop_file()
 
     SYSTEM_PROMPT = """You are a task planning assistant. Your job is to help users accomplish tasks on their Mac by intelligently calling tools.
 
@@ -264,7 +278,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
         plugin = getattr(self, 'plugin', None)
 
         if not plugin:
-            return "Error: Plugin context not available. Please use /tars auto command instead."
+            return "Error: Plugin context not available. Please use !tars auto command instead."
 
         # Get configured model from plugin config
         config = plugin.get_config()
@@ -297,7 +311,7 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 return f"Error: Failed to get available models: {str(e)}"
 
         # Initialize tool registry and load dynamic tools
-        registry = await self._get_tool_registry()
+        registry = await self._get_tool_registry(plugin)
         config = plugin.get_config()
         auto_load_mcp = config.get('planner_auto_load_mcp', True)
 
@@ -411,14 +425,36 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 PlannerTool._llm_call_count += 1
                 logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次), task: {task[:50]}...")
 
+                # Run LLM call with periodic stop check
                 try:
-                    response = await plugin.invoke_llm(
-                        llm_model_uuid=llm_model_uuid,
-                        messages=messages,
-                        funcs=[]
-                    )
+                    async def call_llm_with_stop_check():
+                        """Call LLM and periodically check for stop signal"""
+                        llm_task = asyncio.create_task(plugin.invoke_llm(
+                            llm_model_uuid=llm_model_uuid,
+                            messages=messages,
+                            funcs=[]
+                        ))
+
+                        while not llm_task.done():
+                            # Check both in-memory flag, user stop file, and run file
+                            is_stopped = PlannerTool.is_task_stopped()
+                            file_exists = os.path.exists(SubprocessPlanner._STOP_FILE)
+                            user_stop_exists = SubprocessPlanner._check_user_stop_file()
+                            if is_stopped or user_stop_exists:
+                                llm_task.cancel()
+                                raise asyncio.CancelledError("Task stopped during LLM call")
+                            # Also check run file
+                            if not file_exists:
+                                llm_task.cancel()
+                                raise asyncio.CancelledError("Run file deleted during LLM call")
+                            await asyncio.sleep(0.05)
+
+                        return await llm_task
+
+                    response = await call_llm_with_stop_check()
                 except asyncio.CancelledError:
                     PlannerTool.stop_task()
+                    SubprocessPlanner._clear_user_stop_file()
                     logger.info("Task cancelled via CancelledError")
                     return "Task has been stopped by user."
 
@@ -823,14 +859,33 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                 PlannerTool._llm_call_count += 1
                 logger.info(f"LLM 调用开始 (第 {PlannerTool._llm_call_count} 次), task: {task[:50]}... (skill安装后重试)")
 
+                # Run LLM call with periodic stop check
                 try:
-                    response = await plugin.invoke_llm(
-                        llm_model_uuid=config.get('planner_model_uuid', ''),
-                        messages=messages,
-                        funcs=[]
-                    )
+                    async def call_llm_with_stop_check():
+                        """Call LLM and periodically check for stop signal"""
+                        llm_task = asyncio.create_task(plugin.invoke_llm(
+                            llm_model_uuid=config.get('planner_model_uuid', ''),
+                            messages=messages,
+                            funcs=[]
+                        ))
+
+                        while not llm_task.done():
+                            # Check both in-memory flag, user stop file, and run file
+                            if PlannerTool.is_task_stopped() or SubprocessPlanner._check_user_stop_file():
+                                llm_task.cancel()
+                                raise asyncio.CancelledError("Task stopped during LLM call")
+                            # Also check run file
+                            if not os.path.exists(SubprocessPlanner._STOP_FILE):
+                                llm_task.cancel()
+                                raise asyncio.CancelledError("Run file deleted during LLM call")
+                            await asyncio.sleep(0.05)
+
+                        return await llm_task
+
+                    response = await call_llm_with_stop_check()
                 except asyncio.CancelledError:
                     PlannerTool.stop_task()
+                    SubprocessPlanner._clear_user_stop_file()
                     logger.info("Task cancelled via CancelledError")
                     return "Task has been stopped by user."
 
@@ -1258,7 +1313,10 @@ class PlannerExecutor:
 
         # ReAct loop with streaming
         for iteration in range(max_iterations):
-            # Check if stopped
+            # Yield control to event loop to allow other commands to be processed
+            await asyncio.sleep(0)
+
+            # Check if stopped (memory flag or user stop file)
             if PlannerTool.is_task_stopped():
                 yield "Task stopped by user."
                 return
@@ -1278,18 +1336,35 @@ class PlannerExecutor:
 
             # Check stop before LLM call
             if PlannerTool.is_task_stopped():
+                logger.warning("Stop detected BEFORE LLM call, stopping task")
                 yield "Task stopped by user."
                 return
 
-            # Run LLM call
+            # Run LLM call with periodic stop check
             try:
-                response = await plugin.invoke_llm(
-                    llm_model_uuid=llm_model_uuid,
-                    messages=messages,
-                    funcs=[]
-                )
+                # Create a wrapper that checks stop during LLM call
+                async def call_llm_with_stop_check():
+                    """Call LLM and periodically check for stop signal"""
+                    llm_task = asyncio.create_task(plugin.invoke_llm(
+                        llm_model_uuid=llm_model_uuid,
+                        messages=messages,
+                        funcs=[]
+                    ))
+
+                    # Periodically check for stop while waiting for LLM
+                    while not llm_task.done():
+                        # Check both run file and user stop file
+                        if not os.path.exists(SubprocessPlanner._STOP_FILE) or SubprocessPlanner._check_user_stop_file():
+                            llm_task.cancel()
+                            raise asyncio.CancelledError("Run file deleted during LLM call")
+                        await asyncio.sleep(0.05)  # Check every 50ms - more responsive
+
+                    return await llm_task
+
+                response = await call_llm_with_stop_check()
             except asyncio.CancelledError:
                 PlannerTool.stop_task()
+                SubprocessPlanner._clear_user_stop_file()
                 yield "Task stopped by user."
                 return
             except Exception as e:
@@ -1301,6 +1376,7 @@ class PlannerExecutor:
 
             # 检查停止标志 - 在 LLM 调用完成后立即检查
             if PlannerTool.is_task_stopped():
+                logger.warning("Stop detected AFTER LLM call, stopping task")
                 yield "Task stopped by user."
                 return
 
@@ -1334,6 +1410,9 @@ class PlannerExecutor:
                         )
                         logger.warning(f"[{iteration+1}] 工具结果: {str(result)[:100]}")
 
+                        # Yield control to allow stop command to be processed
+                        await asyncio.sleep(0)
+
                         if PlannerTool.is_task_stopped():
                             yield "Task stopped by user."
                             return
@@ -1355,6 +1434,9 @@ class PlannerExecutor:
                             tool_call, helper_plugin or plugin, registry
                         )
                         logger.warning(f"[{iteration+1}] 工具结果: {str(result)[:100]}")
+
+                        # Yield control to allow stop command to be processed
+                        await asyncio.sleep(0)
 
                         if PlannerTool.is_task_stopped():
                             yield "Task stopped by user."
@@ -1432,3 +1514,374 @@ class PlannerExecutor:
             return {"error": f"Tool execution failed: {str(e)}"}
 
         return {"error": f"Tool not found: {tool_name}"}
+
+
+# Subprocess-based Planner Executor for parallel execution with stop support
+class SubprocessPlanner:
+    """Subprocess-based planner executor for parallel command execution"""
+
+    # PID file path for tracking subprocess
+    _PID_FILE = "/tmp/langtars_planner_pid"
+    # Stop file - when this is deleted, the thread will stop
+    _STOP_FILE = "/tmp/langtars_planner_stop"
+    # User stop file - user can create this file to stop the current task
+    # Usage: touch /tmp/langtars_user_stop
+    _USER_STOP_FILE = "/tmp/langtars_user_stop"
+
+    # Process instance for true subprocess (not thread)
+    _process: Any = None
+
+    @classmethod
+    def _check_user_stop_file(cls) -> bool:
+        """Check if user created the stop file"""
+        return os.path.exists(cls._USER_STOP_FILE)
+
+    @classmethod
+    def _clear_user_stop_file(cls) -> None:
+        """Clear the user stop file after stopping"""
+        try:
+            if os.path.exists(cls._USER_STOP_FILE):
+                os.remove(cls._USER_STOP_FILE)
+        except Exception:
+            pass
+
+    @classmethod
+    def _save_pid(cls, pid: int):
+        """Save PID to file for cross-process tracking"""
+        try:
+            with open(cls._PID_FILE, 'w') as f:
+                f.write(str(pid))
+        except Exception as e:
+            logger.error(f"Failed to save PID: {e}")
+
+    @classmethod
+    def _read_pid(cls) -> int | None:
+        """Read PID from file"""
+        try:
+            if os.path.exists(cls._PID_FILE):
+                with open(cls._PID_FILE, 'r') as f:
+                    return int(f.read().strip())
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def _clear_pid(cls):
+        """Clear PID file"""
+        try:
+            if os.path.exists(cls._PID_FILE):
+                os.remove(cls._PID_FILE)
+        except Exception:
+            pass
+
+    @classmethod
+    def _create_run_file(cls):
+        """Create run file - existence means keep running"""
+        try:
+            with open(cls._STOP_FILE, 'w') as f:
+                f.write("1")
+        except Exception:
+            pass
+
+    @classmethod
+    def _remove_run_file(cls):
+        """Remove run file - absence means stop"""
+        try:
+            if os.path.exists(cls._STOP_FILE):
+                os.remove(cls._STOP_FILE)
+        except Exception:
+            pass
+
+    @classmethod
+    def _should_continue(cls) -> bool:
+        """Check if should continue running - file exists means continue"""
+        return os.path.exists(cls._STOP_FILE)
+
+    @classmethod
+    def is_running(cls) -> bool:
+        """Check if a task is running (legacy, always returns False)"""
+        # This method is kept for backwards compatibility
+        return False
+
+
+# True subprocess-based planner for actual process isolation
+class TrueSubprocessPlanner:
+    """
+    True subprocess-based planner that runs in a separate process.
+    This allows the stop command to directly kill the process.
+    """
+
+    _process: Any = None
+    _pid: int | None = None
+    _PID_FILE = "/tmp/langtars_subprocess_pid"
+
+    @classmethod
+    def is_running(cls) -> bool:
+        """Check if a subprocess is running (using file-based PID tracking)"""
+        # First check in-memory process
+        if cls._process is not None and cls._process.poll() is None:
+            return True
+
+        # Fallback: check PID file
+        try:
+            if os.path.exists(cls._PID_FILE):
+                with open(cls._PID_FILE, 'r') as f:
+                    pid = int(f.read().strip())
+                # Check if process is alive
+                try:
+                    os.kill(pid, 0)  # Signal 0 just checks if process exists
+                    return True
+                except OSError:
+                    # Process doesn't exist, clean up file
+                    try:
+                        os.remove(cls._PID_FILE)
+                    except:
+                        pass
+        except Exception:
+            pass
+
+        return False
+
+    @classmethod
+    async def kill_process(cls) -> bool:
+        """Kill the running subprocess directly"""
+        import subprocess
+
+        killed = False
+
+        # Try to kill using in-memory process reference
+        if cls._process is not None:
+            try:
+                if cls._process.poll() is None:  # Still running
+                    cls._process.terminate()
+                    try:
+                        cls._process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        cls._process.kill()
+                        cls._process.wait()
+                    killed = True
+            except Exception:
+                pass
+            cls._process = None
+
+        # Also try to kill using PID from file
+        pid_to_kill = cls._pid
+        if pid_to_kill is None:
+            # Try to read from PID file
+            try:
+                if os.path.exists(cls._PID_FILE):
+                    with open(cls._PID_FILE, 'r') as f:
+                        pid_to_kill = int(f.read().strip())
+            except Exception:
+                pass
+
+        if pid_to_kill:
+            try:
+                os.kill(pid_to_kill, 9)
+                killed = True
+            except OSError:
+                pass  # Process already dead
+
+        # Clean up PID file
+        try:
+            if os.path.exists(cls._PID_FILE):
+                os.remove(cls._PID_FILE)
+        except Exception:
+            pass
+
+        cls._pid = None
+
+        # Clear run file
+        try:
+            if os.path.exists(SubprocessPlanner._STOP_FILE):
+                os.remove(SubprocessPlanner._STOP_FILE)
+        except Exception:
+            pass
+
+        if killed:
+            logger.warning("[TrueSubprocess] Process killed")
+        else:
+            logger.warning("[TrueSubprocess] No process to kill")
+
+        return True
+
+    @classmethod
+    async def execute_in_subprocess(
+        cls,
+        task: str,
+        max_iterations: int,
+        llm_model_uuid: str,
+        plugin,
+        helper_plugin=None,
+        registry=None,
+        session=None,
+        query_id: int = 0,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Execute planner in a true subprocess, yielding output in real-time.
+        Returns an async generator that yields output strings.
+        """
+        import subprocess
+        import base64
+        import json
+        import uuid
+        import fcntl
+        import select
+
+        # Check if already running
+        if cls.is_running():
+            yield "⚠️ A task is already running. Use !tars stop to stop it first."
+            return
+
+        # Generate unique task ID
+        task_id = str(uuid.uuid4())[:8]
+
+        # Prepare arguments
+        args = {
+            "task": task,
+            "max_iterations": max_iterations,
+            "llm_model_uuid": llm_model_uuid,
+            "config": plugin.get_config() if plugin else {},
+            "task_id": task_id,
+        }
+
+        # Encode args as base64
+        args_b64 = base64.b64encode(json.dumps(args).encode('utf-8')).decode('utf-8')
+
+        # Get the path to this script
+        script_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "components", "tools", "planner_subprocess.py"
+        )
+
+        logger.warning(f"[TrueSubprocess] Starting subprocess: {script_path}")
+
+        try:
+            # Start subprocess with stderr captured for logger output
+            cls._process = subprocess.Popen(
+                ["python3", script_path, args_b64],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+            )
+            cls._pid = cls._process.pid
+
+            # Save PID for external tracking (use our own PID file)
+            try:
+                with open(cls._PID_FILE, 'w') as f:
+                    f.write(str(cls._pid))
+            except Exception:
+                pass
+
+            # Create run file to indicate task is running
+            SubprocessPlanner._create_run_file()
+
+            yield f"🚀 Task started (ID: {task_id}, PID: {cls._pid})\n\n"
+
+            # Set stdout to non-blocking
+            stdout_fd = cls._process.stdout.fileno()
+            fl = fcntl.fcntl(stdout_fd, fcntl.F_GETFL)
+            fcntl.fcntl(stdout_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+            # Also set stderr to non-blocking
+            stderr_fd = cls._process.stderr.fileno()
+            fl = fcntl.fcntl(stderr_fd, fcntl.F_GETFL)
+            fcntl.fcntl(stderr_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+            buffer = ""
+
+            while True:
+                # Check if process is still running
+                if cls._process is None or cls._process.poll() is not None:
+                    # Process has ended or was killed
+                    break
+
+                # Check if we should stop
+                if PlannerTool.is_task_stopped():
+                    logger.warning("[TrueSubprocess] Stop requested, killing process")
+                    await cls.kill_process()
+                    yield "\n🛑 Task stopped by user."
+                    return
+
+                # Check user stop file
+                if SubprocessPlanner._check_user_stop_file():
+                    SubprocessPlanner._clear_user_stop_file()
+                    await cls.kill_process()
+                    yield "\n🛑 Task stopped by user."
+                    return
+
+                # Read stdout with timeout
+                try:
+                    ready, _, _ = select.select([stdout_fd], [], [], 0.1)
+                    if ready:
+                        chunk = cls._process.stdout.read(4096)
+                        if chunk:
+                            buffer += chunk.decode('utf-8', errors='replace')
+                            # Process complete lines
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                if line.strip():
+                                    yield line + "\n"
+                except Exception as e:
+                    logger.debug(f"[TrueSubprocess] Read stdout error: {e}")
+
+                # Also check stderr for any errors (logger output)
+                try:
+                    ready, _, _ = select.select([stderr_fd], [], [], 0)
+                    if ready:
+                        err_chunk = cls._process.stderr.read(4096)
+                        if err_chunk:
+                            err_text = err_chunk.decode('utf-8', errors='replace')
+                            # Log stderr to our logger
+                            for line in err_text.strip().split('\n'):
+                                if line.strip():
+                                    logger.debug(f"[Subprocess] {line}")
+                except Exception:
+                    pass
+
+                # Yield control to event loop
+                await asyncio.sleep(0.05)
+
+            # Read any remaining output
+            try:
+                if cls._process is not None:
+                    remaining = cls._process.stdout.read()
+                    if remaining:
+                        text = remaining.decode('utf-8', errors='replace')
+                        for line in text.strip().split('\n'):
+                            if line.strip():
+                                yield line + "\n"
+            except Exception:
+                pass
+
+            # Clean up
+            if cls._process is not None:
+                try:
+                    cls._process.stdout.close()
+                    cls._process.stderr.close()
+                except Exception:
+                    pass
+                returncode = cls._process.returncode
+            else:
+                returncode = -1
+
+            cls._process = None
+            cls._pid = None
+
+            # Clean up files
+            SubprocessPlanner._clear_pid()
+            SubprocessPlanner._remove_run_file()
+
+            if returncode == 0 or PlannerTool.is_task_stopped():
+                if PlannerTool.is_task_stopped():
+                    yield "\n🛑 Task stopped by user."
+                else:
+                    yield "\n✅ Task completed."
+            else:
+                yield f"\n⚠️ Task exited with code {returncode}"
+
+        except Exception as e:
+            import traceback
+            logger.error(f"[TrueSubprocess] Error: {e}")
+            yield f"\n❌ Error: {str(e)}\n{traceback.format_exc()}"
+            await cls.kill_process()

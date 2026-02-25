@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, AsyncGenerator
 
@@ -13,6 +14,49 @@ from langbot_plugin.api.entities.builtin.platform.message import MessageChain, P
 from components.helpers.plugin import get_helper
 
 logger = logging.getLogger(__name__)
+
+
+class BackgroundTaskManager:
+    """Background task manager for running auto tasks without blocking command handler."""
+
+    _current_task: asyncio.Task | None = None
+    _current_generator: AsyncGenerator | None = None
+    _plugin_ref: Any = None
+    _result_callback: Any = None
+    _bg_task: asyncio.Task | None = None
+    _task_running: bool = False
+    _last_result: str | None = None
+
+    @classmethod
+    def is_running(cls) -> bool:
+        """Check if a background task is running."""
+        return cls._task_running and cls._bg_task is not None and not cls._bg_task.done()
+
+    @classmethod
+    def get_last_result(cls) -> str | None:
+        """Get the last result from the background task."""
+        return cls._last_result
+
+    @classmethod
+    async def stop(cls) -> bool:
+        """Stop the current background task."""
+        from components.tools.planner import TrueSubprocessPlanner
+
+        # First try to kill the subprocess
+        if TrueSubprocessPlanner.is_running():
+            await TrueSubprocessPlanner.kill_process()
+
+        # Then cancel the background task if exists
+        if cls._bg_task and not cls._bg_task.done():
+            cls._bg_task.cancel()
+            try:
+                await cls._bg_task
+            except asyncio.CancelledError:
+                pass
+
+        cls._bg_task = None
+        cls._task_running = False
+        return True
 
 
 class LangTARS(Command):
@@ -316,6 +360,17 @@ class LanTARSCommand:
 
         logger.warning(f"[STOP] is_running check: process={TrueSubprocessPlanner._process}, pid={TrueSubprocessPlanner._pid}")
 
+        # Check if background task is running
+        if BackgroundTaskManager.is_running():
+            logger.warning("[STOP] Background task running, stopping...")
+            await BackgroundTaskManager.stop()
+            last_result = BackgroundTaskManager.get_last_result()
+            if last_result:
+                yield CommandReturn(text=f"🛑 Task stopped.\n\nLast output:\n{last_result}")
+            else:
+                yield CommandReturn(text="🛑 Task has been stopped.")
+            return
+
         # First, try to kill the subprocess directly
         if TrueSubprocessPlanner.is_running():
             logger.warning("[STOP] Subprocess running, killing...")
@@ -432,11 +487,18 @@ Examples:
         """Handle autonomous task planning using ReAct loop."""
         params = context.crt_params
         if not params:
-            yield CommandReturn(text="""Usage: !tars auto <task description>
+            yield CommandReturn(text="""Usage: /tars auto <task description>
 
 Example:
-  !tars auto Open Safari and search for AI news
+  /tars auto Open Safari and search for AI news
 """)
+            return
+
+        # Check if a task is already running
+        from components.tools.planner import PlannerTool, TrueSubprocessPlanner
+
+        if TrueSubprocessPlanner.is_running():
+            yield CommandReturn(text="⚠️ A task is already running. Use /tars stop to stop it first.")
             return
 
         task = " ".join(params)
@@ -480,31 +542,46 @@ Go to Pipelines → Configure → Select LLM Model
             yield CommandReturn(text=f"Error: Failed to get available models: {str(e)}")
             return
 
-        # Check if a task is already running
-        from components.tools.planner import PlannerTool, TrueSubprocessPlanner
-
-        # Check if subprocess is actually running
-        if TrueSubprocessPlanner.is_running():
-            yield CommandReturn(text="⚠️ A task is already running. Use !tars stop to stop it first.")
-            return
-
         # Always reset state before starting a new task
         PlannerTool.reset_task_state()
 
-        # Execute the planner in true subprocess for better stop support
+        # Start task in background and immediately return
+        # This allows stop command to be processed while task runs
         try:
             # Use true subprocess mode - allows stop command to directly kill the process
-            async for partial_result in TrueSubprocessPlanner.execute_in_subprocess(
-                task=task,
-                max_iterations=max_iterations,
-                llm_model_uuid=llm_model_uuid,
-                plugin=_self_cmd.plugin,
-                helper_plugin=_self_cmd.plugin,
-                session=context.session,
-                query_id=context.query_id
-            ):
-                yield CommandReturn(text=partial_result)
+            # But run it in background so stop command can be processed
+            task_started = False
+
+            async def run_task():
+                nonlocal task_started
+                try:
+                    async for partial_result in TrueSubprocessPlanner.execute_in_subprocess(
+                        task=task,
+                        max_iterations=max_iterations,
+                        llm_model_uuid=llm_model_uuid,
+                        plugin=_self_cmd.plugin,
+                        helper_plugin=_self_cmd.plugin,
+                        session=context.session,
+                        query_id=context.query_id
+                    ):
+                        # Store latest result for stop command to retrieve
+                        BackgroundTaskManager._last_result = partial_result
+                        # Small delay to allow stop command to be processed
+                        await asyncio.sleep(0.1)
+                except Exception as e:
+                    import traceback
+                    BackgroundTaskManager._last_result = f"Error: {str(e)}\n{traceback.format_exc()}"
+                finally:
+                    BackgroundTaskManager._task_running = False
+
+            # Start background task
+            bg_task = asyncio.create_task(run_task())
+            BackgroundTaskManager._task_running = True
+            BackgroundTaskManager._bg_task = bg_task
+            BackgroundTaskManager._last_result = None
+
+            yield CommandReturn(text="🚀 Task started in background. Use /tars stop to cancel.\n")
 
         except Exception as e:
             import traceback
-            yield CommandReturn(text=f"Error executing task: {str(e)}\n\n{traceback.format_exc()}")
+            yield CommandReturn(text=f"Error starting task: {str(e)}\n\n{traceback.format_exc()}")
