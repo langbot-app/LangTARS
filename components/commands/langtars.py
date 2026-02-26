@@ -387,12 +387,22 @@ class LanTARSCommand:
 
         from components.tools.planner import PlannerTool, TrueSubprocessPlanner, SubprocessPlanner
 
+        async def _cleanup_browser() -> None:
+            """Best-effort cleanup for Playwright browser resources."""
+            try:
+                result = await _self_cmd.plugin.browser_cleanup()
+                if isinstance(result, dict) and not result.get("success", True):
+                    logger.warning(f"[STOP] Browser cleanup reported failure: {result}")
+            except Exception as e:
+                logger.warning(f"[STOP] Browser cleanup failed: {e}")
+
         logger.warning(f"[STOP] is_running check: process={TrueSubprocessPlanner._process}, pid={TrueSubprocessPlanner._pid}")
 
         # Check if background task is running
         if BackgroundTaskManager.is_running():
             logger.warning("[STOP] Background task running, stopping...")
             await BackgroundTaskManager.stop()
+            await _cleanup_browser()
             last_result = BackgroundTaskManager.get_last_result()
             if last_result:
                 yield CommandReturn(text=f"🛑 Task stopped.\n\nLast output:\n{last_result}")
@@ -404,6 +414,7 @@ class LanTARSCommand:
         if TrueSubprocessPlanner.is_running():
             logger.warning("[STOP] Subprocess running, killing...")
             await TrueSubprocessPlanner.kill_process()
+            await _cleanup_browser()
             yield CommandReturn(text="🛑 Task has been stopped (subprocess killed).")
             return
 
@@ -411,6 +422,7 @@ class LanTARSCommand:
         logger.warning("[STOP] No subprocess running, using fallback")
         PlannerTool.stop_task()
         SubprocessPlanner._remove_run_file()
+        await _cleanup_browser()
 
         yield CommandReturn(text="🛑 Stop signal sent.\n\nIf the task doesn't stop, run in terminal:\n  touch /tmp/langtars_user_stop")
 
@@ -735,6 +747,15 @@ Go to Pipelines → Configure → Select LLM Model
                 except Exception as e:
                     logger.warning(f"Auto result send failed, keep pending for next !tars command: {e}")
 
+            async def _cleanup_browser(phase: str) -> None:
+                """Best-effort cleanup for Playwright browser resources."""
+                try:
+                    result = await _self_cmd.plugin.browser_cleanup()
+                    if isinstance(result, dict) and not result.get("success", True):
+                        logger.warning(f"[AUTO] Browser cleanup reported failure ({phase}): {result}")
+                except Exception as cleanup_err:
+                    logger.warning(f"[AUTO] Browser cleanup failed ({phase}): {cleanup_err}")
+
             async def run_task():
                 try:
                     # Keep the run file semantics so stop checks stay consistent
@@ -771,6 +792,7 @@ Go to Pipelines → Configure → Select LLM Model
                     await _auto_execute_result_reply()
                 finally:
                     SubprocessPlanner._remove_run_file()
+                    await _cleanup_browser("run_task.finally")
                     BackgroundTaskManager._task_running = False
 
             async def run_subprocess_task():
@@ -799,6 +821,7 @@ Go to Pipelines → Configure → Select LLM Model
                     await _reply_background(f"❌ Task error:\n{BackgroundTaskManager._last_result}")
                     await _auto_execute_result_reply()
                 finally:
+                    await _cleanup_browser("run_subprocess_task.finally")
                     BackgroundTaskManager._task_running = False
 
             # NOTE:
