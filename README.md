@@ -97,6 +97,9 @@ These commands are available for testing and direct control:
 |---------|-------------|
 | `!tars auto <task>` | Autonomous task planning (AI-powered) |
 | `!tars what` | What is the agent doing now |
+| `!tars yes` | Confirm dangerous operation |
+| `!tars no` | Cancel and stop dangerous operation |
+| `!tars other <instruction>` | Provide new instruction instead of confirming |
 | `!tars logs [lines]` | View plugin logs (latest N lines) |
 | `!tars result` | Get last auto task result |
 | `!tars shell <command>` | Execute a shell command |

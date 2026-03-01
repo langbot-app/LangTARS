@@ -523,6 +523,12 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                             tool_call, helper_plugin or plugin, registry
                         )
 
+                        # Check if user provided a new instruction
+                        if isinstance(result, dict) and result.get("new_task"):
+                            new_task = result.get("new_task")
+                            logger.info(f"用户提供了新任务: {new_task}")
+                            return f"用户提供了新任务: {new_task}"
+
                         # Check if stopped after tool execution
                         if PlannerTool.is_task_stopped():
                             logger.info(f"LLM 调用结束，共调用 {PlannerTool._llm_call_count} 次")
@@ -576,6 +582,12 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                         result = await self._execute_tool(
                             tool_call, helper_plugin or plugin, registry
                         )
+
+                        # Check if user provided a new instruction
+                        if isinstance(result, dict) and result.get("new_task"):
+                            new_task = result.get("new_task")
+                            logger.info(f"用户提供了新任务: {new_task}")
+                            return f"用户提供了新任务: {new_task}"
 
                         # Check if stopped after tool execution
                         if PlannerTool.is_task_stopped():
@@ -1525,6 +1537,85 @@ class PlannerExecutor:
             )
         except Exception as e:
             logger.debug(f"Failed to update task status: {e}")
+
+        # Check if this is a dangerous operation that needs confirmation
+        dangerous_tools = ['shell', 'kill_process', 'applescript', 'delete_file', 'rm', 'run_command']
+        needs_confirmation = tool_name in dangerous_tools
+        
+        # Additional check: shell with potentially dangerous commands
+        if tool_name == 'shell' and arguments.get('command', ''):
+            cmd = arguments['command'].lower()
+            dangerous_patterns = ['rm -rf', 'rm -r', 'rm -f', 'dd ', 'mkfs', '> /dev/', 'chmod 777', 'chown']
+            if any(p in cmd for p in dangerous_patterns):
+                needs_confirmation = True
+
+        # If confirmation needed, wait for user response
+        if needs_confirmation:
+            try:
+                from components.commands.langtars import BackgroundTaskManager
+                
+                # Build confirmation message
+                confirm_msg = f"⚠️ 危险操作确认\n\n"
+                confirm_msg += f"工具: {tool_name}\n"
+                if tool_name == 'shell':
+                    confirm_msg += f"命令: {arguments.get('command', '')}\n"
+                elif tool_name == 'kill_process':
+                    confirm_msg += f"目标: {arguments.get('target', '')}\n"
+                elif tool_name == 'delete_file':
+                    confirm_msg += f"文件: {arguments.get('path', '')}\n"
+                confirm_msg += "\n请回复「!tars yes」确认执行，回复!tars no」取消，回复「!tars other」执行新命令。"
+                
+                # Send confirmation message to user
+                try:
+                    from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain
+                    # Try to get the plugin from helper_plugin
+                    if hasattr(helper_plugin, 'plugin') and helper_plugin.plugin:
+                        plugin_instance = helper_plugin.plugin
+                    elif hasattr(helper_plugin, '_plugin'):
+                        plugin_instance = helper_plugin._plugin
+                    else:
+                        plugin_instance = helper_plugin
+                    
+                    # Try to send confirmation message
+                    sent = await BackgroundTaskManager.send_confirmation_message(confirm_msg, plugin_instance)
+                    if sent:
+                        logger.info("Confirmation message sent to user")
+                except Exception as e:
+                    logger.warning(f"Failed to send confirmation message: {e}")
+                
+                # Request confirmation
+                BackgroundTaskManager._current_step = f"⏳ 等待确认: {tool_name}"
+                confirmation_future = BackgroundTaskManager.request_confirmation(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    message=confirm_msg
+                )
+                
+                # Wait for confirmation with timeout (60 seconds)
+                try:
+                    confirmed = await asyncio.wait_for(confirmation_future, timeout=60.0)
+                    
+                    # Check if user provided a new instruction
+                    from components.commands.langtars import BackgroundTaskManager
+                    new_instruction = BackgroundTaskManager.get_user_new_instruction()
+                    if new_instruction:
+                        # Clear the instruction and return with new task
+                        BackgroundTaskManager.clear_user_new_instruction()
+                        return {
+                            "success": False, 
+                            "new_task": new_instruction,
+                            "message": f"用户提供了新指令: {new_instruction}"
+                        }
+                    
+                    if not confirmed:
+                        return {"success": False, "error": "用户取消操作"}
+                except asyncio.TimeoutError:
+                    BackgroundTaskManager.confirm(False)  # Clear pending confirmation
+                    return {"success": False, "error": "等待确认超时，操作已取消"}
+                    
+            except Exception as e:
+                logger.warning(f"Confirmation error: {e}")
+                # If confirmation fails, we'll proceed but log warning
 
         # Execute via registry
         try:

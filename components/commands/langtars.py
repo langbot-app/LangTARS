@@ -34,6 +34,18 @@ class BackgroundTaskManager:
     _current_tool: str = ""  # Current tool being executed
     _task_start_time: float = 0.0  # Task start timestamp
     _llm_call_count: int = 0  # Number of LLM calls made
+    
+    # Confirmation state for dangerous operations
+    _pending_confirmation: dict | None = None  # Pending confirmation request
+    _confirmation_callback: asyncio.Future | None = None  # Future to wait for user confirmation
+    
+    # Message sending context for confirmation notifications
+    _bot_uuid: str | None = None
+    _target_type: str | None = None
+    _target_id: Any = None
+    
+    # User's new instruction when denying confirmation
+    _user_new_instruction: str | None = None
 
     @classmethod
     def is_running(cls) -> bool:
@@ -109,6 +121,90 @@ class BackgroundTaskManager:
         cls._current_tool = ""
         cls._task_start_time = 0.0
         cls._llm_call_count = 0
+        cls._pending_confirmation = None
+        cls._confirmation_callback = None
+
+    @classmethod
+    def request_confirmation(cls, tool_name: str, arguments: dict, message: str) -> asyncio.Future:
+        """Request confirmation from user for a dangerous operation.
+        
+        Returns a Future that will be resolved when user confirms or denies.
+        """
+        cls._pending_confirmation = {
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "message": message,
+        }
+        cls._confirmation_callback = asyncio.Future()
+        return cls._confirmation_callback
+
+    @classmethod
+    def confirm(cls, confirmed: bool) -> None:
+        """Process user confirmation response."""
+        if cls._confirmation_callback and not cls._confirmation_callback.done():
+            cls._confirmation_callback.set_result(confirmed)
+        cls._pending_confirmation = None
+
+    @classmethod
+    def get_pending_confirmation(cls) -> dict | None:
+        """Get pending confirmation if any."""
+        return cls._pending_confirmation
+
+    @classmethod
+    def has_pending_confirmation(cls) -> bool:
+        """Check if there's a pending confirmation."""
+        return cls._pending_confirmation is not None
+
+    @classmethod
+    def set_user_new_instruction(cls, instruction: str) -> None:
+        """Set user's new instruction when denying confirmation."""
+        cls._user_new_instruction = instruction
+        # Also mark as denied to stop the current operation
+        cls.confirm(False)
+
+    @classmethod
+    def get_user_new_instruction(cls) -> str | None:
+        """Get user's new instruction."""
+        return cls._user_new_instruction
+
+    @classmethod
+    def clear_user_new_instruction(cls) -> None:
+        """Clear user's new instruction."""
+        cls._user_new_instruction = None
+
+    @classmethod
+    def set_message_context(cls, bot_uuid: str, target_type: str, target_id: Any) -> None:
+        """Set the message sending context for confirmation notifications."""
+        cls._bot_uuid = bot_uuid
+        cls._target_type = target_type
+        cls._target_id = target_id
+
+    @classmethod
+    async def send_confirmation_message(cls, message: str, plugin: Any) -> bool:
+        """Send a message to the user using the stored context."""
+        if not cls._bot_uuid or not cls._target_type or cls._target_id is None:
+            return False
+        
+        try:
+            from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain
+            await plugin.send_message(
+                bot_uuid=cls._bot_uuid,
+                target_type=cls._target_type,
+                target_id=cls._target_id,
+                message_chain=MessageChain([Plain(text=message)]),
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to send confirmation message: {e}")
+            return False
+
+    @classmethod
+    async def cancel_task(cls) -> None:
+        """Cancel the running task and stop execution."""
+        # Stop the background task
+        await cls.stop()
+        # Clear confirmation state
+        cls.confirm(False)
 
 
 class LangTARS(Command):
@@ -199,6 +295,27 @@ class LangTARS(Command):
             help="What is the agent doing now",
             usage="!tars what",
             aliases=[],
+        )
+
+        self.registered_subcommands["yes"] = Subcommand(
+            subcommand=LanTARSCommand.confirm,
+            help="Confirm dangerous operation",
+            usage="!tars yes",
+            aliases=["y", "confirm", "ok", "同意", "好", "确认"],
+        )
+
+        self.registered_subcommands["no"] = Subcommand(
+            subcommand=LanTARSCommand.deny,
+            help="Deny and cancel dangerous operation",
+            usage="!tars no",
+            aliases=["n", "cancel", "deny", "不同意", "不", "取消"],
+        )
+
+        self.registered_subcommands["other"] = Subcommand(
+            subcommand=LanTARSCommand.other,
+            help="Provide new instruction instead of confirming",
+            usage="!tars other <new instruction>",
+            aliases=["other!", "换个任务", "新任务", "改变任务"],
         )
 
         self.registered_subcommands["top"] = Subcommand(
@@ -559,6 +676,22 @@ class LanTARSCommand:
         """Get current task status - what is the agent doing now."""
         status = BackgroundTaskManager.get_task_status()
         
+        # Check if there's a pending confirmation
+        if BackgroundTaskManager.has_pending_confirmation():
+            pending = BackgroundTaskManager.get_pending_confirmation()
+            confirm_msg = f"⚠️ 待确认的危险操作:\n\n"
+            confirm_msg += f"工具: {pending.get('tool_name', '')}\n"
+            args = pending.get('arguments', {})
+            if pending.get('tool_name') == 'shell':
+                confirm_msg += f"命令: {args.get('command', '')}\n"
+            elif pending.get('tool_name') == 'kill_process':
+                confirm_msg += f"目标: {args.get('target', '')}\n"
+            elif pending.get('tool_name') == 'delete_file':
+                confirm_msg += f"文件: {args.get('path', '')}\n"
+            confirm_msg += "\n请回复「!tars yes」确认执行，回复!tars no」取消，回复「!tars other」执行新命令。"
+            yield CommandReturn(text=confirm_msg)
+            return
+        
         if not status["is_running"]:
             yield CommandReturn(text="🤖 当前没有正在运行的任务。")
             return
@@ -577,6 +710,63 @@ class LanTARSCommand:
         msg_parts.append(f"⏱️ 运行时间: {status['elapsed_seconds']} 秒")
 
         yield CommandReturn(text="\n".join(msg_parts))
+
+    @staticmethod
+    async def confirm(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Handle user confirmation for dangerous operations."""
+        params = context.crt_params
+        user_input = " ".join(params).lower().strip() if params else ""
+        
+        # Check if there's a pending confirmation
+        if not BackgroundTaskManager.has_pending_confirmation():
+            yield CommandReturn(text="ℹ️ 当前没有待确认的危险操作。")
+            return
+        
+        # Check if user confirmed (yes, y, ok, confirm, 可以, 好, 确认, 同意, yes!, ok!)
+        confirm_keywords = ["yes", "y", "ok", "confirm", "可以", "好", "确认", "同意", "sure", "yes!", "ok!", "y!", "确认！", "好！", "同意！", "可以！"]
+        
+        if user_input in confirm_keywords or not user_input:
+            # User confirmed
+            BackgroundTaskManager.confirm(True)
+            yield CommandReturn(text="✅ 已确认，继续执行危险操作...")
+        else:
+            # User denied
+            BackgroundTaskManager.confirm(False)
+            yield CommandReturn(text="❌ 已取消危险操作。")
+
+    @staticmethod
+    async def deny(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Handle user denial for dangerous operations - cancel and stop the task."""
+        # Check if there's a pending confirmation
+        if not BackgroundTaskManager.has_pending_confirmation():
+            yield CommandReturn(text="ℹ️ 当前没有待确认的危险操作。")
+            return
+        
+        # Cancel the task and stop execution
+        await BackgroundTaskManager.cancel_task()
+        yield CommandReturn(text="❌ 已取消并停止任务执行。")
+
+    @staticmethod
+    async def other(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Handle user providing a new instruction instead of confirming dangerous operation."""
+        params = context.crt_params
+        
+        # Check if there's a pending confirmation
+        if not BackgroundTaskManager.has_pending_confirmation():
+            yield CommandReturn(text="ℹ️ 当前没有待确认的危险操作。")
+            return
+        
+        if not params:
+            yield CommandReturn(text="请提供新的指令。例如：!tars other 我要查天气")
+            return
+        
+        # Get the new instruction from params
+        new_instruction = " ".join(params)
+        
+        # Set the new instruction
+        BackgroundTaskManager.set_user_new_instruction(new_instruction)
+        
+        yield CommandReturn(text=f"✅ 已收到新指令：{new_instruction}\n\n正在停止当前任务并开始新任务...")
 
     @staticmethod
     async def top(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
@@ -748,6 +938,26 @@ Go to Pipelines → Configure → Select LLM Model
             tool=""
         )
         BackgroundTaskManager._task_running = True
+        
+        # Set message context for confirmation notifications
+        try:
+            bot_uuid_ctx = None
+            try:
+                bot_uuid_ctx = await context.get_bot_uuid()
+            except Exception:
+                pass
+            if not bot_uuid_ctx:
+                conversation = getattr(context.session, "using_conversation", None)
+                if conversation and getattr(conversation, "bot_uuid", None):
+                    bot_uuid_ctx = str(conversation.bot_uuid)
+            if bot_uuid_ctx:
+                BackgroundTaskManager.set_message_context(
+                    bot_uuid=bot_uuid_ctx,
+                    target_type=context.session.launcher_type.value,
+                    target_id=context.session.launcher_id
+                )
+        except Exception as e:
+            logger.warning(f"Failed to set message context: {e}")
 
         # Send task start notification to user
         try:

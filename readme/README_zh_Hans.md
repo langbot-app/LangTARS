@@ -109,6 +109,9 @@ AI 将：
 | 命令 | 描述 |
 |------|------|
 | `!tars what` | 查看 agent 当前正在做什么 |
+| `!tars yes` | 确认危险操作 |
+| `!tars no` | 取消并停止危险操作 |
+| `!tars other <新指令>` | 提供新指令而不是确认 |
 | `!tars logs [lines]` | 查看插件日志（最近 N 行） |
 | `!tars result` | 获取最近一次 auto 任务结果 |
 | `!tars shell <command>` | 执行 shell 命令 |

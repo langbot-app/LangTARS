@@ -108,6 +108,9 @@ AI 將：
 | 命令 | 描述 |
 |------|------|
 | `!tars what` | 查看 agent 當前正在做什麼 |
+| `!tars yes` | 確認危險操作 |
+| `!tars no` | 取消並停止危險操作 |
+| `!tars other <新指令>` | 提供新指令而不是確認 |
 | `!tars logs [lines]` | 查看外掛日誌（最近 N 行） |
 | `!tars result` | 取得最近一次 auto 任務結果 |
 | `!tars shell <command>` | 執行 shell 命令 |
