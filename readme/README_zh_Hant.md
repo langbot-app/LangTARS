@@ -39,6 +39,8 @@ LangTARS 採用不同的方式：
 2. 設定您偏好的 LLM 模型用於任務規劃
 3. 開始透過 IM 訊息控制您的 Mac！
 
+> 📱 **推薦**：推薦在 **Telegram** 或 **釘釘** 平台使用 LangTARS，以獲得最佳體驗。
+
 ## 首次設定 - Mac 權限
 
 首次使用前，需要授予一些權限：
@@ -105,6 +107,7 @@ AI 將：
 
 | 命令 | 描述 |
 |------|------|
+| `!tars what` | 查看 agent 當前正在做什麼 |
 | `!tars logs [lines]` | 查看外掛日誌（最近 N 行） |
 | `!tars result` | 取得最近一次 auto 任務結果 |
 | `!tars shell <command>` | 執行 shell 命令 |

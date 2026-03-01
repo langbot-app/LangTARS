@@ -39,6 +39,8 @@ LangTARS takes a different approach:
 2. Configure your preferred LLM model for task planning
 3. Start controlling your Mac via IM messages!
 
+> 📱 **Recommended**: Use LangTARS on **Telegram** or **DingTalk** platform for the best experience.
+
 ## Main Command
 
 ### `!tars auto` — Autonomous Task Planning
@@ -94,6 +96,7 @@ These commands are available for testing and direct control:
 | Command | Description |
 |---------|-------------|
 | `!tars auto <task>` | Autonomous task planning (AI-powered) |
+| `!tars what` | What is the agent doing now |
 | `!tars logs [lines]` | View plugin logs (latest N lines) |
 | `!tars result` | Get last auto task result |
 | `!tars shell <command>` | Execute a shell command |

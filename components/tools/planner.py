@@ -493,6 +493,18 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
                     if content_str.strip().upper().startswith("WORKING:"):
                         working_msg = content_str[8:].strip()
                         logger.info(f"LLM 正在工作中: {working_msg}")
+                        
+                        # Update background task status
+                        try:
+                            from components.commands.langtars import BackgroundTaskManager
+                            BackgroundTaskManager.set_task_status(
+                                task_description=task,
+                                step=working_msg,
+                                tool=""
+                            )
+                        except Exception as e:
+                            logger.debug(f"Failed to update task status: {e}")
+                        
                         # Reset invalid response count since this is a valid state
                         PlannerTool._invalid_response_count = 0
                         # Add as user message and continue to next iteration
@@ -1502,6 +1514,17 @@ class PlannerExecutor:
 
         if not tool_name:
             return {"error": "No tool name specified"}
+
+        # Update background task status with current tool
+        try:
+            from components.commands.langtars import BackgroundTaskManager
+            BackgroundTaskManager.set_task_status(
+                task_description=PlannerTool._current_task_info.get("task_description", ""),
+                step=f"正在执行工具: {tool_name}",
+                tool=tool_name
+            )
+        except Exception as e:
+            logger.debug(f"Failed to update task status: {e}")
 
         # Execute via registry
         try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.api.definition.components.command.command import Command, Subcommand
@@ -26,6 +27,13 @@ class BackgroundTaskManager:
     _task_running: bool = False
     _last_result: str | None = None
     _pending_result: str | None = None
+    
+    # Task status tracking
+    _current_task_description: str = ""  # Current task description
+    _current_step: str = ""  # Current step description (what the agent is doing)
+    _current_tool: str = ""  # Current tool being executed
+    _task_start_time: float = 0.0  # Task start timestamp
+    _llm_call_count: int = 0  # Number of LLM calls made
 
     @classmethod
     def is_running(cls) -> bool:
@@ -62,6 +70,45 @@ class BackgroundTaskManager:
         cls._bg_task = None
         cls._task_running = False
         return True
+
+    @classmethod
+    def set_task_status(cls, task_description: str = "", step: str = "", tool: str = "") -> None:
+        """Update the current task status."""
+        cls._current_task_description = task_description
+        cls._current_step = step
+        cls._current_tool = tool
+        if cls._task_start_time == 0.0:
+            cls._task_start_time = time.time()
+
+    @classmethod
+    def get_task_status(cls) -> dict:
+        """Get the current task status."""
+        elapsed = 0.0
+        if cls._task_start_time > 0.0:
+            elapsed = time.time() - cls._task_start_time
+        
+        return {
+            "is_running": cls.is_running(),
+            "task_description": cls._current_task_description,
+            "current_step": cls._current_step,
+            "current_tool": cls._current_tool,
+            "llm_call_count": cls._llm_call_count,
+            "elapsed_seconds": round(elapsed, 1)
+        }
+
+    @classmethod
+    def increment_llm_call(cls) -> None:
+        """Increment the LLM call count."""
+        cls._llm_call_count += 1
+
+    @classmethod
+    def reset_task_status(cls) -> None:
+        """Reset task status for a new task."""
+        cls._current_task_description = ""
+        cls._current_step = ""
+        cls._current_tool = ""
+        cls._task_start_time = 0.0
+        cls._llm_call_count = 0
 
 
 class LangTARS(Command):
@@ -145,6 +192,13 @@ class LangTARS(Command):
             help="Get last auto task result",
             usage="!tars result",
             aliases=["last"],
+        )
+
+        self.registered_subcommands["what"] = Subcommand(
+            subcommand=LanTARSCommand.what,
+            help="What is the agent doing now",
+            usage="!tars what",
+            aliases=[],
         )
 
         self.registered_subcommands["top"] = Subcommand(
@@ -501,6 +555,30 @@ class LanTARSCommand:
         yield CommandReturn(text="No task result found.")
 
     @staticmethod
+    async def what(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Get current task status - what is the agent doing now."""
+        status = BackgroundTaskManager.get_task_status()
+        
+        if not status["is_running"]:
+            yield CommandReturn(text="🤖 当前没有正在运行的任务。")
+            return
+
+        # Build status message
+        msg_parts = []
+        msg_parts.append(f"🧠 任务: {status['task_description']}")
+        
+        if status["current_step"]:
+            msg_parts.append(f"📍 进度: {status['current_step']}")
+        
+        if status["current_tool"]:
+            msg_parts.append(f"🔧 工具: {status['current_tool']}")
+        
+        msg_parts.append(f"📊 LLM调用: {status['llm_call_count']} 次")
+        msg_parts.append(f"⏱️ 运行时间: {status['elapsed_seconds']} 秒")
+
+        yield CommandReturn(text="\n".join(msg_parts))
+
+    @staticmethod
     async def top(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Handle app listing."""
         helper = await get_helper()
@@ -661,6 +739,40 @@ Go to Pipelines → Configure → Select LLM Model
 
         # Always reset state before starting a new task
         PlannerTool.reset_task_state()
+        
+        # Initialize background task status
+        BackgroundTaskManager.reset_task_status()
+        BackgroundTaskManager.set_task_status(
+            task_description=task,
+            step="任务已启动，正在初始化...",
+            tool=""
+        )
+        BackgroundTaskManager._task_running = True
+
+        # Send task start notification to user
+        try:
+            bot_uuid_notify: str | None = None
+            try:
+                bot_uuid_notify = await context.get_bot_uuid()
+            except Exception:
+                pass
+            if not bot_uuid_notify:
+                conversation = getattr(context.session, "using_conversation", None)
+                if conversation and getattr(conversation, "bot_uuid", None):
+                    bot_uuid_notify = str(conversation.bot_uuid)
+            
+            if bot_uuid_notify:
+                notify_target_type = context.session.launcher_type.value
+                notify_target_id = context.session.launcher_id
+                start_msg = f"🚀 任务已启动！\n\n任务: {task[:100]}{'...' if len(task) > 100 else ''}\n\n使用 !tars what 查看进度"
+                await _self_cmd.plugin.send_message(
+                    bot_uuid=bot_uuid_notify,
+                    target_type=notify_target_type,
+                    target_id=notify_target_id,
+                    message_chain=MessageChain([Plain(text=start_msg)]),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send task start notification: {e}")
 
         # Start task in background and immediately return
         # This allows stop command to be processed while task runs
@@ -794,6 +906,7 @@ Go to Pipelines → Configure → Select LLM Model
                     SubprocessPlanner._remove_run_file()
                     await _cleanup_browser("run_task.finally")
                     BackgroundTaskManager._task_running = False
+                    BackgroundTaskManager._current_step = "任务已完成"
 
             async def run_subprocess_task():
                 try:
@@ -823,6 +936,7 @@ Go to Pipelines → Configure → Select LLM Model
                 finally:
                     await _cleanup_browser("run_subprocess_task.finally")
                     BackgroundTaskManager._task_running = False
+                    BackgroundTaskManager._current_step = "任务已完成"
 
             # NOTE:
             # LLM invocation depends on plugin_runtime_handler from the current runtime.
