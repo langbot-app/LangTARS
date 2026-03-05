@@ -19,9 +19,9 @@
 
 ## 什麼是 LangTARS？
 
-LangTARS 是借鑒 **Nanobot** 的 ReAct 理念開發的 **LangBot 原生插件**，旨在為 LangBot 用戶帶來 **OpenClaw** 般的體驗。它使您能夠透過 IM 訊息使用自主 AI 任務規劃來控制您的 Mac。如同《星際穿越》中的 **塔斯(TARS)** 一樣，為您忠誠工作。
+LangTARS 是借鑒 **Nanobot** 的 ReAct 理念開發的 **LangBot 原生插件**，旨在為 LangBot 用戶帶來 **OpenClaw** 般的體驗。它使您能夠透過 IM 訊息使用自主 AI 任務規劃來控制您的 **Mac 或 Windows 電腦**。如同《星際穿越》中的 **塔斯(TARS)** 一樣，為您忠誠工作。
 
-與 [OpenClaw](https://github.com/openclaw/openclaw) 類似，LangTARS 允許 AI 助手在您的 Mac 上執行真實操作——但具有 LangBot 插件的簡潔與優雅。
+與 [OpenClaw](https://github.com/openclaw/openclaw) 類似，LangTARS 允許 AI 助手在您的電腦上執行真實操作——但具有 LangBot 插件的簡潔與優雅。
 
 ## 為什麼選擇 LangTARS？
 
@@ -37,22 +37,28 @@ LangTARS 採用不同的方式：
 
 1. 透過 LangBot 的插件系統安裝 LangTARS
 2. 設定您偏好的 LLM 模型用於任務規劃
-3. 開始透過 IM 訊息控制您的 Mac！
+3. 開始透過 IM 訊息控制您的 Mac 或 Windows 電腦！
 
 > 📱 **推薦**：推薦在 **Telegram** 或 **釘釘** 平台使用 LangTARS，以獲得最佳體驗。
 
-## 首次設定 - Mac 權限
+## 首次設定 - 權限配置
+
+### macOS 權限
 
 首次使用前，需要授予一些權限：
 
-### AppleScript automation 權限
+#### AppleScript automation 權限
 - 開啟 **系統偏好設定** > **隱私與安全性** > **輔助功能**
 - 點擊左下角 🔒 解鎖
 - 新增 **Terminal** 或您的聊天應用 (如 WeChat, Telegram 等)
 
-### Safari JavaScript 權限 (可選)
+#### Safari JavaScript 權限 (可選)
 - 開啟 **Safari** > **設定** > **進階**
 - 勾選 **允許 Apple Events 中的 JavaScript**
+
+### Windows 權限
+
+Windows 上 LangTARS 使用 PowerShell 和 UI Automation 進行系統控制，通常無需額外權限配置。
 
 ## 主要命令
 
@@ -67,13 +73,21 @@ LangTARS 採用不同的方式：
 
 ### 瀏覽器控制
 
-LangTARS 支援三種瀏覽器控制方式：
+LangTARS 支援多種瀏覽器控制方式：
 
+**macOS:**
 | 命令範例 | 瀏覽器 | 說明 |
 |----------|--------|------|
 | `!tars auto 訪問 github.com` | Playwright (Chromium) | 預設方式，無需額外權限 |
 | `!tars auto 開啟 Safari 並訪問 github` | Safari 瀏覽器 | 使用真實 Safari，需要 AppleScript 權限 |
 | `!tars auto 開啟 Chrome 並訪問 github` | Chrome 瀏覽器 | 使用真實 Chrome，需要 AppleScript 權限 |
+
+**Windows:**
+| 命令範例 | 瀏覽器 | 說明 |
+|----------|--------|------|
+| `!tars auto 訪問 github.com` | Playwright (Chromium) | 預設方式，無需額外權限 |
+| `!tars auto 開啟 Chrome 並訪問 github` | Chrome 瀏覽器 | 使用真實 Chrome，透過 PowerShell/UI Automation |
+| `!tars auto 開啟 Edge 並訪問 github` | Edge 瀏覽器 | 使用真實 Edge，透過 PowerShell/UI Automation |
 
 AI 將：
 1. 理解您的請求
@@ -129,13 +143,15 @@ AI 將：
 
 | 選項 | 描述 | 預設值 |
 |------|------|--------|
-| `allowed_users` | 允許控制此 Mac 的使用者 ID | [] |
+| `allowed_users` | 允許控制此電腦的使用者 ID | [] |
 | `command_whitelist` | 允許的 shell 命令（留空 = 在限制下允許所有） | [] |
 | `workspace_path` | 檔案操作的工作區目錄 | ~/.langtars |
 | `enable_shell` | 啟用 shell 命令執行 | true |
 | `enable_process` | 啟用程序管理 | true |
 | `enable_file` | 啟用檔案操作 | true |
 | `enable_app` | 啟用應用控制 | true |
+| `enable_applescript` | 啟用 AppleScript 執行 (macOS) | true |
+| `enable_powershell` | 啟用 PowerShell 執行 (Windows) | true |
 | `planner_max_iterations` | 最大 ReAct 循環迭代次數 | 5 |
 | `planner_model_uuid` | 用於任務規劃的 LLM 模型 | （第一個可用） |
 | `planner_rate_limit_seconds` | LLM 呼叫之間的速率限制 | 1 |
@@ -151,7 +167,7 @@ AI 將：
 ## 架構
 
 ```
-IM 訊息 --> LangBot --> PlannerTool (ReAct 循環) --> 工具 --> Mac 操作
+IM 訊息 --> LangBot --> PlannerTool (ReAct 循環) --> 工具 --> 系統操作 (Mac/Windows)
 ```
 
 - **PlannerTool** — 使用 LLM 進行自主任務規劃的 ReAct 循環

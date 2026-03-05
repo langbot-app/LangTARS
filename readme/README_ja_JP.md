@@ -20,9 +20,9 @@
 
 ## LangTARS とは？
 
-LangTARS は **Nanobot** の ReAct コンセプトを元に開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで Mac を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
+LangTARS は **Nanobot** の ReAct コンセプトを元に開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで **Mac または Windows PC** を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
 
-[OpenClaw](https://github.com/openclaw/openclaw) と同様に、LangTARS は AI アシスタントが Mac で実際の操作を実行できますが、LangBot プラグインの洗練さと洗練さを備えています。
+[OpenClaw](https://github.com/openclaw/openclaw) と同様に、LangTARS は AI アシスタントがコンピュータで実際の操作を実行できますが、LangBot プラグインの洗練さと洗練さを備えています。
 
 ## なぜ LangTARS なのか？
 
@@ -38,22 +38,28 @@ LangTARS は異なるアプローチを取ります：
 
 1. LangBot のプラグインシステムから LangTARS をインストール
 2. タスクプランニング用に好みの LLM モデルを構成
-3. IM メッセージで Mac の制御を開始！
+3. IM メッセージで Mac または Windows PC の制御を開始！
 
 > 📱 **おすすめ**：**Telegram** または **DingTalk（钉钉）** プラットフォームで LangTARS を使用することおすすめします。
 
-## 初回セットアップ - Mac 権限
+## 初回セットアップ - 権限設定
+
+### macOS 権限
 
 初めて使用する前に、いくつかの権限を付与する必要があります：
 
-### AppleScript  automation 権限
+#### AppleScript automation 権限
 - **システム設定** > **プライバシーとセキュリティ** > **アクセシビリティ** を開く
 - 左下の 🔒 をクリックしてロックを解除
 - **ターミナル** やチャットアプリ（WeChat、Telegram など）を追加
 
-### Safari JavaScript 権限（オプション）
+#### Safari JavaScript 権限（オプション）
 - **Safari** > **設定** > **詳細** を開く
 - **Apple Events からの JavaScript を許可** にチェックを入れる
+
+### Windows 権限
+
+Windows では LangTARS は PowerShell と UI Automation を使用してシステムを制御します。通常、追加の権限設定は不要です。
 
 ## メインコマンド
 
@@ -68,13 +74,21 @@ LangTARS は異なるアプローチを取ります：
 
 ### ブラウザ制御
 
-LangTARS は3つのブラウザ制御方法をサポートしています：
+LangTARS は複数のブラウザ制御方法をサポートしています：
 
+**macOS:**
 | コマンド例 | ブラウザ | 説明 |
 |----------|---------|------|
 | `!tars auto github.com にアクセス` | Playwright (Chromium) | デフォルト、追加権限不要 |
 | `!tars auto Safari を開いて github に行く` | Safari ブラウザ | 実際の Safari を使用、AppleScript 権限が必要 |
 | `!tars auto Chrome を開いて github に行く` | Chrome ブラウザ | 実際の Chrome を使用、AppleScript 権限が必要 |
+
+**Windows:**
+| コマンド例 | ブラウザ | 説明 |
+|----------|---------|------|
+| `!tars auto github.com にアクセス` | Playwright (Chromium) | デフォルト、追加権限不要 |
+| `!tars auto Chrome を開いて github に行く` | Chrome ブラウザ | 実際の Chrome を使用、PowerShell/UI Automation 経由 |
+| `!tars auto Edge を開いて github に行く` | Edge ブラウザ | 実際の Edge を使用、PowerShell/UI Automation 経由 |
 
 AI は以下を行います：
 1. リクエストを理解する
@@ -130,14 +144,16 @@ LangBot の設定で LangTARS を構成：
 
 | オプション | 説明 | デフォルト |
 |-----------|------|------------|
-| `allowed_users` | この Mac を制御できるユーザー ID | [] |
+| `allowed_users` | このコンピュータを制御できるユーザー ID | [] |
 | `command_whitelist` | 許可するシェルコマンド（空 = 制限付きで全て許可） | [] |
 | `workspace_path` | ファイル操作用のワークスペースディレクトリ | ~/.langtars |
 | `enable_shell` | シェルコマンド実行を有効化 | true |
 | `enable_process` | プロセス管理を有効化 | true |
 | `enable_file` | ファイル操作を有効化 | true |
 | `enable_app` | アプリ制御を有効化 | true |
-| `planner_max_iterations | 最大 ReAct ループ反復回数 | 5 |
+| `enable_applescript` | AppleScript 実行を有効化 (macOS) | true |
+| `enable_powershell` | PowerShell 実行を有効化 (Windows) | true |
+| `planner_max_iterations` | 最大 ReAct ループ反復回数 | 5 |
 | `planner_model_uuid` | タスクプランニング用の LLM モデル | （最初の利用可能なモデル） |
 | `planner_rate_limit_seconds` | LLM 呼び出し間のレート制限 | 1 |
 | `planner_auto_load_mcp` | MCP ツールを自動読み込み | true |
@@ -152,7 +168,7 @@ LangBot の設定で LangTARS を構成：
 ## アーキテクチャ
 
 ```
-IM メッセージ --> LangBot --> PlannerTool (ReAct ループ) --> ツール --> Mac 操作
+IM メッセージ --> LangBot --> PlannerTool (ReAct ループ) --> ツール --> システム操作 (Mac/Windows)
 ```
 
 - **PlannerTool** — LLM を使用した自律タスクプランニングの ReAct ループ

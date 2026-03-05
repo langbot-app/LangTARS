@@ -19,9 +19,9 @@
 
 ## What is LangTARS?
 
-LangTARS is a **native Claw-like plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your Mac through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
+LangTARS is a **native Claw-like plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your **Mac or Windows PC** through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
 
-Like [OpenClaw](https://github.com/openclaw/openclaw), LangTARS allows AI assistants to execute real actions on your Mac—but with the simplicity and elegance of a LangBot plugin.
+Like [OpenClaw](https://github.com/openclaw/openclaw), LangTARS allows AI assistants to execute real actions on your computer—but with the simplicity and elegance of a LangBot plugin.
 
 ## Why LangTARS?
 
@@ -37,7 +37,7 @@ LangTARS takes a different approach:
 
 1. Install LangTARS through LangBot's plugin system
 2. Configure your preferred LLM model for task planning
-3. Start controlling your Mac via IM messages!
+3. Start controlling your Mac or Windows PC via IM messages!
 
 > 📱 **Recommended**: Use LangTARS on **Telegram** or **DingTalk** platform for the best experience.
 
@@ -55,13 +55,21 @@ This is the **primary command** that makes LangTARS special. Simply describe wha
 
 ### Browser Control
 
-LangTARS supports three browser control methods:
+LangTARS supports multiple browser control methods:
 
+**macOS:**
 | Command Example | Browser | Description |
 |----------|---------|------|
 | `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
 | `!tars auto Open Safari and visit github` | Safari Browser | Uses real Safari, requires AppleScript permission |
 | `!tars auto Open Chrome and visit github` | Chrome Browser | Uses real Chrome, requires AppleScript permission |
+
+**Windows:**
+| Command Example | Browser | Description |
+|----------|---------|------|
+| `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
+| `!tars auto Open Chrome and visit github` | Chrome Browser | Uses real Chrome via PowerShell/UI Automation |
+| `!tars auto Open Edge and visit github` | Edge Browser | Uses real Edge via PowerShell/UI Automation |
 
 The AI will:
 1. Understand your request
@@ -118,14 +126,15 @@ Configure LangTARS through LangBot's settings:
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `allowed_users` | User IDs allowed to control this Mac | [] |
+| `allowed_users` | User IDs allowed to control this computer | [] |
 | `command_whitelist` | Allowed shell commands (empty = all with restrictions) | [] |
 | `workspace_path` | Working directory for file operations | ~/.langtars |
 | `enable_shell` | Enable shell command execution | true |
 | `enable_process` | Enable process management | true |
 | `enable_file` | Enable file operations | true |
 | `enable_app` | Enable app control | true |
-| `enable_applescript` | Enable AppleScript execution | true |
+| `enable_applescript` | Enable AppleScript execution (macOS) | true |
+| `enable_powershell` | Enable PowerShell execution (Windows) | true |
 | `enable_browser` | Enable browser automation (Playwright) | true |
 | `browser_type` | Browser engine (chromium/firefox/webkit) | chromium |
 | `browser_headless` | Run browser in headless mode | false |
@@ -147,7 +156,7 @@ Configure LangTARS through LangBot's settings:
 ## Architecture
 
 ```
-IM Message --> LangBot --> PlannerTool (ReAct Loop) --> Tools --> Mac Actions
+IM Message --> LangBot --> PlannerTool (ReAct Loop) --> Tools --> System Actions (Mac/Windows)
 ```
 
 - **PlannerTool** — ReAct loop for autonomous task planning using LLM
