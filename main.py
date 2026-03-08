@@ -1,5 +1,5 @@
 # LangTARS Plugin for LangBot
-# Control your computer through IM messages (supports macOS and Windows)
+# Control your computer through IM messages (supports macOS, Windows and Linux)
 
 from __future__ import annotations
 
@@ -393,7 +393,19 @@ class LangTARS(Command, BasePlugin):
             if self._windows:
                 return await self._windows.open_app(app_name, url)
             return {'success': False, 'error': 'Windows controller not initialized'}
+        elif IS_LINUX:
+            # Linux: use xdg-open for URLs and applications
+            if url:
+                cmd = f'xdg-open "{url}"'
+            elif app_name:
+                # Try to launch application directly
+                cmd = f'{app_name} &'
+            else:
+                return {'success': False, 'error': 'No target'}
+            result = await self.run_shell(cmd)
+            return {'success': result['success'], 'message': f'Opened {url or app_name}' if result['success'] else result.get('error')}
         else:
+            # macOS
             cmd = f'open "{url}"' if url else f'open -a "{app_name}"' if app_name else None
             if not cmd:
                 return {'success': False, 'error': 'No target'}
@@ -409,6 +421,7 @@ class LangTARS(Command, BasePlugin):
                 return await self._windows.close_app(app_name, force)
             return {'success': False, 'error': 'Windows controller not initialized'}
         else:
+            # Linux and macOS both support pkill
             result = await self.run_shell(f'pkill -{"9" if force else "TERM"} "{app_name}"')
             return {'success': result['success'], 'message': f'Closed {app_name}' if result['success'] else result.get('error')}
 
@@ -420,7 +433,15 @@ class LangTARS(Command, BasePlugin):
             if self._windows:
                 return await self._windows.list_apps(limit)
             return {'success': False, 'error': 'Windows controller not initialized', 'apps': []}
+        elif IS_LINUX:
+            # Linux: use ps to list processes with visible windows or common desktop apps
+            result = await self.run_shell(f"ps -eo comm --no-headers | sort -u | head -n {limit}")
+            if result['success']:
+                apps = [a.strip() for a in result['stdout'].strip().split('\n') if a.strip()]
+                return {'success': True, 'apps': apps, 'count': len(apps)}
+            return {'success': False, 'error': result.get('error'), 'apps': []}
         else:
+            # macOS
             result = await self.run_shell(f"osascript -e 'tell app \"System Events\" to get name of every process' | tr ',' '\\n' | head -n {limit}")
             if result['success']:
                 apps = [a.strip() for a in result['stdout'].strip().split('\n') if a.strip()]

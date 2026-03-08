@@ -20,7 +20,7 @@
 
 ## 什么是 LangTARS？
 
-LangTARS 是借鉴 **Nanobot** 的 ReAct 理念开发的 **LangBot 原生插件**，旨在为 LangBot 用户带来 **OpenClaw** 般的体验。它使您能够通过 IM 消息使用自主 AI 任务规划来控制您的 **Mac 或 Windows 电脑**。如同《星际穿越》中的 **塔斯(TARS)** 一样，为您忠诚工作。
+LangTARS 是借鉴 **Nanobot** 的 ReAct 理念开发的 **LangBot 原生插件**，旨在为 LangBot 用户带来 **OpenClaw** 般的体验。它使您能够通过 IM 消息使用自主 AI 任务规划来控制您的 **Mac、Windows 电脑或 Linux 系统**。如同《星际穿越》中的 **塔斯(TARS)** 一样，为您忠诚工作。
 
 与 [OpenClaw](https://github.com/openclaw/openclaw) 类似，LangTARS 允许 AI 助手在您的电脑上执行真实操作——但具有 LangBot 插件的简洁与优雅。
 
@@ -36,9 +36,23 @@ LangTARS 采用不同的方式：
 
 ## 快速开始
 
-1. 通过 LangBot 的插件系统安装 LangTARS
-2. 配置您偏好的 LLM 模型用于任务规划
-3. 开始通过 IM 消息控制您的 Mac 或 Windows 电脑！
+> ⚠️ **注意**：目前只测试过手动部署代码的方式。
+
+### 手动部署
+
+1. 安装 langbot-plugin：
+   ```bash
+   pip install langbot-plugin
+   ```
+2. 安装依赖：
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. 创建 `.env` 文件并配置
+4. 运行插件：
+   ```bash
+   lbp run
+   ```
 
 > 📱 **推荐**：推荐在 **Telegram** 或 **钉钉** 平台使用 LangTARS，以获得最佳体验。
 
@@ -60,6 +74,10 @@ LangTARS 采用不同的方式：
 ### Windows 权限
 
 Windows 上 LangTARS 使用 PowerShell 和 UI Automation 进行系统控制，通常无需额外权限配置。
+
+### Linux 权限
+
+Linux 上 LangTARS 使用标准 shell 命令进行系统控制，通常无需额外权限配置。确保 `xdg-open` 可用以打开 URL 和应用程序。
 
 ## 主要命令
 
@@ -89,6 +107,12 @@ LangTARS 支持多种浏览器控制方式：
 | `!tars auto 访问 github.com` | Playwright (Chromium) | 默认方式，无需额外权限 |
 | `!tars auto 打开 Chrome 并访问 github` | Chrome 浏览器 | 使用真实 Chrome，通过 PowerShell/UI Automation |
 | `!tars auto 打开 Edge 并访问 github` | Edge 浏览器 | 使用真实 Edge，通过 PowerShell/UI Automation |
+
+**Linux:**
+| 命令示例 | 浏览器 | 说明 |
+|----------|--------|------|
+| `!tars auto 访问 github.com` | Playwright (Chromium) | 默认方式，无需额外权限 |
+| `!tars auto 打开 firefox 并访问 github` | Firefox 浏览器 | 使用 xdg-open 或直接命令 |
 
 AI 将：
 1. 理解您的请求
@@ -177,7 +201,7 @@ AI 将：
 ## 架构
 
 ```
-IM 消息 --> LangBot --> PlannerTool (ReAct 循环) --> 工具 --> 系统操作 (Mac/Windows)
+IM 消息 --> LangBot --> PlannerTool (ReAct 循环) --> 工具 --> 系统操作 (Mac/Windows/Linux)
 ```
 
 - **PlannerTool** — 使用 LLM 进行自主任务规划的 ReAct 循环

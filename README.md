@@ -19,7 +19,7 @@
 
 ## What is LangTARS?
 
-LangTARS is a **native Claw-like plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your **Mac or Windows PC** through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
+LangTARS is a **native Claw-like plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your **Mac, Windows PC, or Linux system** through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
 
 Like [OpenClaw](https://github.com/openclaw/openclaw), LangTARS allows AI assistants to execute real actions on your computer—but with the simplicity and elegance of a LangBot plugin.
 
@@ -35,9 +35,23 @@ LangTARS takes a different approach:
 
 ## Quick Start
 
-1. Install LangTARS through LangBot's plugin system
-2. Configure your preferred LLM model for task planning
-3. Start controlling your Mac or Windows PC via IM messages!
+> ⚠️ **Note**: Currently only manual deployment has been tested.
+
+### Manual Deployment
+
+1. Install langbot-plugin:
+   ```bash
+   pip install langbot-plugin
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Create a `.env` file with your configuration
+4. Run the plugin:
+   ```bash
+   lbp run
+   ```
 
 > 📱 **Recommended**: Use LangTARS on **Telegram** or **DingTalk** platform for the best experience.
 
@@ -70,6 +84,12 @@ LangTARS supports multiple browser control methods:
 | `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
 | `!tars auto Open Chrome and visit github` | Chrome Browser | Uses real Chrome via PowerShell/UI Automation |
 | `!tars auto Open Edge and visit github` | Edge Browser | Uses real Edge via PowerShell/UI Automation |
+
+**Linux:**
+| Command Example | Browser | Description |
+|----------|---------|------|
+| `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
+| `!tars auto Open firefox and visit github` | Firefox Browser | Uses xdg-open or direct command |
 
 The AI will:
 1. Understand your request
@@ -165,7 +185,7 @@ Configure LangTARS through LangBot's settings:
 ## Architecture
 
 ```
-IM Message --> LangBot --> PlannerTool (ReAct Loop) --> Tools --> System Actions (Mac/Windows)
+IM Message --> LangBot --> PlannerTool (ReAct Loop) --> Tools --> System Actions (Mac/Windows/Linux)
 ```
 
 - **PlannerTool** — ReAct loop for autonomous task planning using LLM

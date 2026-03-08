@@ -12,6 +12,7 @@ from . import BasePlannerTool
 # Platform detection
 IS_MACOS = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
 PLATFORM_NAME = "Windows" if IS_WINDOWS else "Mac" if IS_MACOS else "Linux"
 
 
@@ -26,6 +27,8 @@ class ShellTool(BasePlannerTool):
     def description(self) -> str:
         if IS_WINDOWS:
             return "Execute a shell command on this Windows PC. Use this for running commands like dir, tasklist, findstr, curl, etc."
+        elif IS_LINUX:
+            return "Execute a shell command on this Linux system. Use this for running terminal commands like ls, ps, grep, curl, systemctl, etc."
         return "Execute a shell command on this Mac. Use this for running terminal commands like ls, ps, grep, curl, etc."
 
     @property
@@ -135,6 +138,8 @@ class OpenAppTool(BasePlannerTool):
     def description(self) -> str:
         if IS_WINDOWS:
             return "Open an application or URL on this Windows PC. Examples: 'notepad', 'chrome', 'https://google.com'"
+        elif IS_LINUX:
+            return "Open an application or URL on this Linux system. Examples: 'firefox', 'gedit', 'https://google.com'"
         return "Open an application or URL on this Mac. Examples: 'Safari', 'Chrome', 'https://google.com'"
 
     @property

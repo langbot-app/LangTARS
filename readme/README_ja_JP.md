@@ -20,7 +20,7 @@
 
 ## LangTARS とは？
 
-LangTARS は **Nanobot** の ReAct コンセプトを元に開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで **Mac または Windows PC** を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
+LangTARS は **Nanobot** の ReAct コンセプトを元に開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで **Mac、Windows PC、または Linux システム** を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
 
 [OpenClaw](https://github.com/openclaw/openclaw) と同様に、LangTARS は AI アシスタントがコンピュータで実際の操作を実行できますが、LangBot プラグインの洗練さと洗練さを備えています。
 
@@ -36,9 +36,23 @@ LangTARS は異なるアプローチを取ります：
 
 ## クイックスタート
 
-1. LangBot のプラグインシステムから LangTARS をインストール
-2. タスクプランニング用に好みの LLM モデルを構成
-3. IM メッセージで Mac または Windows PC の制御を開始！
+> ⚠️ **注意**：現在、手動デプロイのみテスト済みです。
+
+### 手動デプロイ
+
+1. langbot-plugin をインストール：
+   ```bash
+   pip install langbot-plugin
+   ```
+2. 依存関係をインストール：
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. `.env` ファイルを作成して設定
+4. プラグインを実行：
+   ```bash
+   lbp run
+   ```
 
 > 📱 **おすすめ**：**Telegram** または **DingTalk（钉钉）** プラットフォームで LangTARS を使用することおすすめします。
 
@@ -60,6 +74,10 @@ LangTARS は異なるアプローチを取ります：
 ### Windows 権限
 
 Windows では LangTARS は PowerShell と UI Automation を使用してシステムを制御します。通常、追加の権限設定は不要です。
+
+### Linux 権限
+
+Linux では LangTARS は標準シェルコマンドを使用してシステムを制御します。通常、追加の権限設定は不要です。URL やアプリケーションを開くために `xdg-open` が利用可能であることを確認してください。
 
 ## メインコマンド
 
@@ -89,6 +107,12 @@ LangTARS は複数のブラウザ制御方法をサポートしています：
 | `!tars auto github.com にアクセス` | Playwright (Chromium) | デフォルト、追加権限不要 |
 | `!tars auto Chrome を開いて github に行く` | Chrome ブラウザ | 実際の Chrome を使用、PowerShell/UI Automation 経由 |
 | `!tars auto Edge を開いて github に行く` | Edge ブラウザ | 実際の Edge を使用、PowerShell/UI Automation 経由 |
+
+**Linux:**
+| コマンド例 | ブラウザ | 説明 |
+|----------|---------|------|
+| `!tars auto github.com にアクセス` | Playwright (Chromium) | デフォルト、追加権限不要 |
+| `!tars auto firefox を開いて github に行く` | Firefox ブラウザ | xdg-open または直接コマンドを使用 |
 
 AI は以下を行います：
 1. リクエストを理解する
@@ -177,7 +201,7 @@ LangBot の設定で LangTARS を構成：
 ## アーキテクチャ
 
 ```
-IM メッセージ --> LangBot --> PlannerTool (ReAct ループ) --> ツール --> システム操作 (Mac/Windows)
+IM メッセージ --> LangBot --> PlannerTool (ReAct ループ) --> ツール --> システム操作 (Mac/Windows/Linux)
 ```
 
 - **PlannerTool** — LLM を使用した自律タスクプランニングの ReAct ループ
