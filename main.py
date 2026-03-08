@@ -68,27 +68,14 @@ class LangTARS(Command, BasePlugin):
 
         # Register subcommands - delegate to LanTARSCommand
         self.registered_subcommands = {
-            "info": Subcommand(subcommand=LanTARSCommand.info, help="Get system info", usage="!tars info", aliases=["system"]),
-            "shell": Subcommand(subcommand=LanTARSCommand.shell, help="Execute shell", usage="!tars shell <cmd>", aliases=["sh", "exec"]),
-            "ps": Subcommand(subcommand=LanTARSCommand.ps, help="List processes", usage="!tars ps [filter]", aliases=["processes"]),
-            "ls": Subcommand(subcommand=LanTARSCommand.ls, help="List directory", usage="!tars ls [path]", aliases=["dir"]),
-            "cat": Subcommand(subcommand=LanTARSCommand.cat, help="Read file", usage="!tars cat <path>", aliases=["read"]),
-            "kill": Subcommand(subcommand=LanTARSCommand.kill, help="Kill process", usage="!tars kill <pid|name>", aliases=[]),
-            "open": Subcommand(subcommand=LanTARSCommand.open, help="Open app/URL", usage="!tars open <app|url>", aliases=["launch"]),
-            "close": Subcommand(subcommand=LanTARSCommand.close, help="Close app", usage="!tars close <app>", aliases=["quit"]),
-            "apps": Subcommand(subcommand=LanTARSCommand.top, help="List apps", usage="!tars apps", aliases=["top"]),
-            "stop": Subcommand(subcommand=LanTARSCommand.stop, help="Stop task", usage="!tars stop", aliases=["pause"]),
-            "logs": Subcommand(subcommand=LanTARSCommand.logs, help="View logs", usage="!tars logs [lines]", aliases=["log"]),
-            "result": Subcommand(subcommand=LanTARSCommand.result, help="Get last auto task result", usage="!tars result", aliases=["last"]),
-            "what": Subcommand(subcommand=LanTARSCommand.what, help="What is the agent doing now", usage="!tars what", aliases=[]),
-            "yes": Subcommand(subcommand=LanTARSCommand.confirm, help="Confirm dangerous operation", usage="!tars yes", aliases=["y", "confirm", "ok"]),
-            "no": Subcommand(subcommand=LanTARSCommand.deny, help="Deny dangerous operation", usage="!tars no", aliases=["n", "cancel", "deny"]),
+            "stop": Subcommand(subcommand=LanTARSCommand.stop, help="Stop task", usage="!tars stop", aliases=["pause", "停止"]),
+            "what": Subcommand(subcommand=LanTARSCommand.what, help="What is the agent doing now", usage="!tars what", aliases=["状态", "进度"]),
+            "yes": Subcommand(subcommand=LanTARSCommand.confirm, help="Confirm dangerous operation", usage="!tars yes", aliases=["y", "confirm", "ok", "同意", "好", "确认"]),
+            "no": Subcommand(subcommand=LanTARSCommand.deny, help="Deny dangerous operation", usage="!tars no", aliases=["n", "cancel", "deny", "不同意", "不", "取消"]),
             "other": Subcommand(subcommand=LanTARSCommand.other, help="Provide new instruction", usage="!tars other <new instruction>", aliases=["新任务", "改变任务"]),
             "help": Subcommand(subcommand=LanTARSCommand.help, help="Show command help", usage="!tars help", aliases=["h", "?", "帮助"]),
+            "reset": Subcommand(subcommand=LanTARSCommand.reset, help="Reset conversation history", usage="!tars reset", aliases=["清空", "重置", "clear"]),
             "config": Subcommand(subcommand=self.cmd_config, help="Config", usage="!tars config [save]", aliases=["cfg"]),
-            "search": Subcommand(subcommand=LanTARSCommand.search, help="Search files", usage="!tars search <pattern>", aliases=["find"]),
-            "write": Subcommand(subcommand=LanTARSCommand.write, help="Write file", usage="!tars write <path> <content>", aliases=["save"]),
-            "auto": Subcommand(subcommand=LanTARSCommand.auto, help="AI planning", usage="!tars auto <task>", aliases=["plan", "run"]),
             "*": Subcommand(subcommand=LanTARSCommand.default, help="Help", usage="!tars help", aliases=[]),
         }
 

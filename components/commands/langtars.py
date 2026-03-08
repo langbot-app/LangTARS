@@ -50,6 +50,11 @@ class BackgroundTaskManager:
     # Generic interactive Q&A state (non-danger confirmation)
     _pending_question: dict | None = None
     _question_callback: asyncio.Future | None = None
+    
+    # Message history for continue functionality - per user
+    # Key: user_id (str), Value: dict with messages, task, registry, llm_model_uuid
+    _user_conversation_states: dict[str, dict] = {}
+    _current_user_id: str | None = None  # Current user ID for the running task
 
     @classmethod
     def is_running(cls) -> bool:
@@ -129,6 +134,101 @@ class BackgroundTaskManager:
         cls._confirmation_callback = None
         cls._pending_question = None
         cls._question_callback = None
+        # Note: We don't reset conversation states here
+        # because they are needed for the continue functionality
+
+    @classmethod
+    def set_current_user(cls, user_id: str) -> None:
+        """Set the current user ID for the running task."""
+        cls._current_user_id = user_id
+
+    @classmethod
+    def get_current_user(cls) -> str | None:
+        """Get the current user ID."""
+        return cls._current_user_id
+
+    @classmethod
+    def save_conversation_state(
+        cls,
+        messages: list,
+        task: str,
+        registry: Any,
+        llm_model_uuid: str,
+        user_id: str | None = None
+    ) -> None:
+        """Save conversation state for continue functionality.
+        
+        Args:
+            messages: The conversation messages
+            task: The task description
+            registry: The tool registry
+            llm_model_uuid: The LLM model UUID
+            user_id: The user ID (uses current user if not provided)
+        """
+        uid = user_id or cls._current_user_id
+        if not uid:
+            logger.warning("Cannot save conversation state: no user ID")
+            return
+        
+        cls._user_conversation_states[uid] = {
+            "messages": messages.copy() if messages else None,
+            "task": task,
+            "registry": registry,
+            "llm_model_uuid": llm_model_uuid
+        }
+
+    @classmethod
+    def get_conversation_state(cls, user_id: str | None = None) -> tuple[list | None, str | None, Any, str | None]:
+        """Get saved conversation state for continue functionality.
+        
+        Args:
+            user_id: The user ID (uses current user if not provided)
+        
+        Returns:
+            Tuple of (messages, task, registry, llm_model_uuid)
+        """
+        uid = user_id or cls._current_user_id
+        if not uid or uid not in cls._user_conversation_states:
+            return (None, None, None, None)
+        
+        state = cls._user_conversation_states[uid]
+        return (
+            state.get("messages"),
+            state.get("task"),
+            state.get("registry"),
+            state.get("llm_model_uuid")
+        )
+
+    @classmethod
+    def has_conversation_state(cls, user_id: str | None = None) -> bool:
+        """Check if there's a saved conversation state for the user.
+        
+        Args:
+            user_id: The user ID (uses current user if not provided)
+        """
+        uid = user_id or cls._current_user_id
+        if not uid or uid not in cls._user_conversation_states:
+            return False
+        
+        state = cls._user_conversation_states[uid]
+        messages = state.get("messages")
+        return messages is not None and len(messages) > 0
+
+    @classmethod
+    def clear_conversation_state(cls, user_id: str | None = None) -> None:
+        """Clear saved conversation state for a user.
+        
+        Args:
+            user_id: The user ID (uses current user if not provided)
+        """
+        uid = user_id or cls._current_user_id
+        if uid and uid in cls._user_conversation_states:
+            del cls._user_conversation_states[uid]
+
+    @classmethod
+    def clear_all_conversation_states(cls) -> None:
+        """Clear all saved conversation states for all users."""
+        cls._user_conversation_states.clear()
 
     @classmethod
     def request_confirmation(cls, tool_name: str, arguments: dict, message: str) -> asyncio.Future:
@@ -259,88 +359,19 @@ class LangTARS(Command):
     async def initialize(self):
         await super().initialize()
 
-        # Register subcommands with class methods (unbound)
-        self.registered_subcommands["shell"] = Subcommand(
-            subcommand=LanTARSCommand.shell,
-            help="Execute a shell command",
-            usage="!tars shell <command>",
-            aliases=["sh", "exec"],
-        )
-
-        self.registered_subcommands["ps"] = Subcommand(
-            subcommand=LanTARSCommand.ps,
-            help="List running processes",
-            usage="!tars ps [filter] [limit]",
-            aliases=["processes", "process"],
-        )
-
-        self.registered_subcommands["kill"] = Subcommand(
-            subcommand=LanTARSCommand.kill,
-            help="Kill a process by name or PID",
-            usage="!tars kill <name|PID> [-f]",
-            aliases=[],
-        )
-
-        self.registered_subcommands["ls"] = Subcommand(
-            subcommand=LanTARSCommand.ls,
-            help="List directory contents",
-            usage="!tars ls [path] [-a]",
-            aliases=["list", "dir"],
-        )
-
-        self.registered_subcommands["cat"] = Subcommand(
-            subcommand=LanTARSCommand.cat,
-            help="Read file content",
-            usage="!tars cat <path>",
-            aliases=["read", "view"],
-        )
-
-        self.registered_subcommands["write"] = Subcommand(
-            subcommand=LanTARSCommand.write,
-            help="Write content to a file",
-            usage="!tars write <path> <content>",
-            aliases=["save", "create"],
-        )
-
-        self.registered_subcommands["open"] = Subcommand(
-            subcommand=LanTARSCommand.open,
-            help="Open an application or URL",
-            usage="!tars open <app|url>",
-            aliases=["launch", "start"],
-        )
-
-        self.registered_subcommands["close"] = Subcommand(
-            subcommand=LanTARSCommand.close,
-            help="Close an application",
-            usage="!tars close <app_name> [-f]",
-            aliases=["quit"],
-        )
-
+        # Register subcommands - only essential commands for AI-powered task execution
         self.registered_subcommands["stop"] = Subcommand(
             subcommand=LanTARSCommand.stop,
             help="Stop the current running task",
             usage="!tars stop",
-            aliases=["pause"],  # Removed "cancel" to avoid conflict with "no" command
-        )
-
-        self.registered_subcommands["logs"] = Subcommand(
-            subcommand=LanTARSCommand.logs,
-            help="View plugin logs",
-            usage="!tars logs [lines]",
-            aliases=["log"],
-        )
-        self.registered_subcommands["result"] = Subcommand(
-            subcommand=LanTARSCommand.result,
-            help="Get last auto task result",
-            usage="!tars result",
-            aliases=["last"],
+            aliases=["pause", "停止"],
         )
 
         self.registered_subcommands["what"] = Subcommand(
             subcommand=LanTARSCommand.what,
             help="What is the agent doing now",
             usage="!tars what",
-            aliases=[],
+            aliases=["状态", "进度"],
         )
 
         self.registered_subcommands["yes"] = Subcommand(
@@ -357,13 +388,6 @@ class LangTARS(Command):
             aliases=["n", "cancel", "deny", "不同意", "不", "取消"],
         )
 
-        self.registered_subcommands["other"] = Subcommand(
-            subcommand=LanTARSCommand.other,
-            help="Provide new instruction instead of confirming",
-            usage="!tars other <new instruction>",
-            aliases=["other!", "换个任务", "新任务", "改变任务"],
-        )
-
         self.registered_subcommands["help"] = Subcommand(
             subcommand=LanTARSCommand.help,
             help="Show command help",
@@ -371,44 +395,33 @@ class LangTARS(Command):
             aliases=["h", "?", "帮助"],
         )
 
-        self.registered_subcommands["top"] = Subcommand(
-            subcommand=LanTARSCommand.top,
-            help="Show running applications",
-            usage="!tars top",
-            aliases=["apps"],
+        self.registered_subcommands["reset"] = Subcommand(
+            subcommand=LanTARSCommand.reset,
+            help="Reset conversation history to start fresh",
+            usage="!tars reset",
+            aliases=["清空", "重置", "clear"],
         )
 
-        self.registered_subcommands["info"] = Subcommand(
-            subcommand=LanTARSCommand.info,
-            help="Show system information",
-            usage="!tars info",
-            aliases=["system", "status"],
-        )
-
-        self.registered_subcommands["search"] = Subcommand(
-            subcommand=LanTARSCommand.search,
-            help="Search for files",
-            usage="!tars search <pattern> [path]",
-            aliases=["find"],
-        )
-
-        self.registered_subcommands["auto"] = Subcommand(
-            subcommand=LanTARSCommand.auto,
-            help="Autonomous task planning (AI-powered)",
-            usage="!tars auto <task description>",
-            aliases=["plan", "run"],
-        )
-
-        # Wildcard subcommand to handle no subcommand
+        # Wildcard subcommand to handle task execution (both new and continue)
         self.registered_subcommands["*"] = Subcommand(
             subcommand=LanTARSCommand.default,
-            help="Show help or handle default",
-            usage="!tars help",
+            help="Execute a task (new or continue from previous)",
+            usage="!tars <task description>",
             aliases=[],
         )
 
     async def _execute(self, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
         """Inject pending auto-task result before executing next !tars command."""
+        # Check user permission
+        try:
+            user_id = str(context.session.launcher_id) if context.session else None
+            if user_id and hasattr(self.plugin, 'is_user_allowed'):
+                if not self.plugin.is_user_allowed(user_id):
+                    yield CommandReturn(text="⛔ 您没有权限使用此命令。请联系管理员将您添加到允许用户列表中。")
+                    return
+        except Exception as e:
+            logger.warning(f"Failed to check user permission: {e}")
+        
         next_cmd = context.crt_params[0] if context.crt_params else ""
         if next_cmd != "result":
             pending = BackgroundTaskManager.get_pending_result()
@@ -425,214 +438,28 @@ class LanTARSCommand:
 
     @staticmethod
     def _help_text() -> str:
-        return """LangTARS - 命令大全
+        return """LangTARS - AI 自主任务助手
 
-核心命令:
-  !tars auto <任务>         - AI 自主执行任务
+使用方法:
+  !tars <任务描述>          - AI 自主执行任务
+                            如果有上次任务的对话历史，会自动继续
+
+控制命令:
   !tars stop               - 停止当前任务
   !tars what               - 查看当前进度/是否在等待确认
-  !tars result             - 查看最近任务结果
-  !tars logs [行数]        - 查看日志
+  !tars reset              - 清空对话历史，开始全新任务
 
 交互命令:
   !tars yes                - 确认危险操作
   !tars no                 - 取消危险操作并停止任务
-  !tars other <新指令>      - 放弃当前危险操作并改做新任务
-  !tars <你的回答>          - 回答插件提出的问题（例如二选一）
+  !tars <你的回答>          - 回答插件提出的问题
 
-系统命令:
-  !tars shell <命令>        - 执行 shell 命令
-  !tars ps [filter]        - 列进程
-  !tars kill <pid|name>    - 结束进程
-  !tars ls [path]          - 列目录
-  !tars cat <path>         - 读文件
-  !tars write <path> <txt> - 写文件
-  !tars search <pattern>   - 搜文件
-  !tars open <app|url>     - 打开应用或网址
-  !tars close <app>        - 关闭应用
-  !tars apps               - 列运行中的应用
-  !tars info               - 查看系统信息
+示例:
+  !tars 打开浏览器访问 github.com
+  !tars 帮我整理桌面上的文件
+  !tars 把刚才的结果保存到文件（基于上次任务继续）
+  !tars reset              （清空历史后开始新任务）
 """
-
-    @staticmethod
-    async def shell(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle shell command execution."""
-        params = context.crt_params
-        if not params:
-            yield CommandReturn(text="Usage: !tars shell <command>")
-            return
-
-        command = " ".join(params)
-        yield CommandReturn(text=f"Executing: `{command}`\n\n")
-
-        helper = await get_helper()
-        result = await helper.run_shell(command)
-
-        if result["success"]:
-            output = result.get("stdout", "") or result.get("stderr", "")
-            yield CommandReturn(text=f"Command executed successfully\n\n```\n{output}\n```")
-        else:
-            yield CommandReturn(text=f"Command failed: {result.get('error', 'Unknown error')}")
-
-    @staticmethod
-    async def ps(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle process listing."""
-        params = context.crt_params
-        filter_pattern = params[0] if params else None
-        limit = 20
-
-        helper = await get_helper()
-        result = await helper.list_processes(filter_pattern, limit)
-
-        if result["success"]:
-            processes = result.get("processes", [])
-            if not processes:
-                yield CommandReturn(text="No processes found.")
-                return
-
-            lines = ["**Processes:**\n"]
-            lines.append(f"{'PID':<8} {'CPU%':<8} {'MEM%':<8} {'COMMAND'}")
-            lines.append("-" * 60)
-            for p in processes[:15]:
-                cmd = p.get("command", "")[:30]
-                lines.append(f"{p.get('pid',''):<8} {p.get('cpu',''):<8} {p.get('mem',''):<8} {cmd}")
-
-            if len(processes) > 15:
-                lines.append(f"... and {len(processes) - 15} more")
-
-            yield CommandReturn(text="\n".join(lines))
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
-
-    @staticmethod
-    async def kill(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle process killing."""
-        params = context.crt_params
-        if not params:
-            yield CommandReturn(text="Usage: !tars kill <name|PID> [-f]")
-            return
-
-        target = params[0]
-        force = "-f" in params
-
-        helper = await get_helper()
-        result = await helper.kill_process(target, force=force)
-
-        if result["success"]:
-            yield CommandReturn(text=f"Process terminated: {target}")
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
-
-    @staticmethod
-    async def ls(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle directory listing."""
-        params = context.crt_params
-        path = params[0] if params else "."
-        show_hidden = "-a" in params
-
-        helper = await get_helper()
-        result = await helper.list_directory(path, show_hidden)
-
-        if result["success"]:
-            items = result.get("items", [])
-            if not items:
-                yield CommandReturn(text=f"Directory is empty: {result.get('path', path)}")
-                return
-
-            lines = [f"**Contents of `{result.get('path', path)}`**\n"]
-            for item in items:
-                icon = "📁" if item["type"] == "directory" else "📄"
-                size_str = f" ({item['size']} bytes)" if item["size"] > 0 else ""
-                lines.append(f"{icon} {item['name']}{size_str}")
-
-            lines.append(f"\nTotal: {result.get('count', 0)} items")
-            yield CommandReturn(text="\n".join(lines))
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Access denied')}")
-
-    @staticmethod
-    async def cat(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle file reading."""
-        params = context.crt_params
-        if not params:
-            yield CommandReturn(text="Usage: !tars cat <path>")
-            return
-
-        path = params[0]
-
-        helper = await get_helper()
-        result = await helper.read_file(path)
-
-        if result["success"]:
-            content = result.get("content", "")
-            if result.get("is_binary"):
-                yield CommandReturn(text=f"Binary file: {result.get('path', path)} ({result.get('size', 0)} bytes)")
-            elif len(content) > 2000:
-                yield CommandReturn(text=f"```\n{content[:2000]}\n```\n\n... (truncated)")
-            else:
-                yield CommandReturn(text=f"```\n{content}\n```")
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Access denied')}")
-
-    @staticmethod
-    async def write(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle file writing."""
-        params = context.crt_params
-        if len(params) < 2:
-            yield CommandReturn(text="Usage: !tars write <path> <content>")
-            return
-
-        path = params[0]
-        content = " ".join(params[1:])
-
-        helper = await get_helper()
-        result = await helper.write_file(path, content)
-
-        if result["success"]:
-            yield CommandReturn(text=f"File written: {result.get('path', path)}")
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
-
-    @staticmethod
-    async def open(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle app/URL opening."""
-        params = context.crt_params
-        if not params:
-            yield CommandReturn(text="Usage: !tars open <app_name|url>")
-            return
-
-        target = params[0]
-        is_url = target.startswith(("http://", "https://", "mailto:", "tel:"))
-
-        helper = await get_helper()
-        result = await helper.open_app(
-            target if not is_url else None,
-            url=target if is_url else None
-        )
-
-        if result["success"]:
-            yield CommandReturn(text=f"Opened: {target}")
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
-
-    @staticmethod
-    async def close(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle app closing."""
-        params = context.crt_params
-        if not params:
-            yield CommandReturn(text="Usage: !tars close <app_name> [-f]")
-            return
-
-        app_name = params[0]
-        force = "-f" in params
-
-        helper = await get_helper()
-        result = await helper.close_app(app_name, force=force)
-
-        if result["success"]:
-            yield CommandReturn(text=f"Closed: {app_name}")
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
 
     @staticmethod
     async def stop(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
@@ -685,80 +512,6 @@ class LanTARSCommand:
         await _cleanup_browser()
 
         yield CommandReturn(text="🛑 Stop signal sent.\n\nIf the task doesn't stop, run in terminal:\n  touch /tmp/langtars_user_stop")
-
-    @staticmethod
-    async def logs(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle log viewing."""
-        from collections import deque
-        from pathlib import Path
-
-        # Get number of lines to show (default 50)
-        params = context.crt_params
-        try:
-            lines = int(params[0]) if params else 50
-        except ValueError:
-            lines = 50
-
-        def _tail_file(path: Path, max_lines: int) -> str:
-            with path.open("r", encoding="utf-8", errors="replace") as f:
-                return "".join(deque(f, maxlen=max_lines)).strip()
-
-        log_files = [
-            Path.home() / ".langtars" / "logs" / "langtars.log",
-            Path("/tmp/langtars.log"),
-            Path("/tmp/langtars_planner.log"),
-            Path.home() / "Library" / "Logs" / "langtars.log",
-        ]
-
-        output_blocks = []
-        for log_file in log_files:
-            if not log_file.exists() or not log_file.is_file():
-                continue
-            try:
-                content = _tail_file(log_file, lines)
-            except Exception as e:
-                output_blocks.append(f"📄 Logs from {log_file}:\n(read failed: {e})")
-                continue
-
-            if content:
-                output_blocks.append(f"📄 Logs from {log_file}:\n{content}")
-
-        if not output_blocks:
-            yield CommandReturn(
-                text=(
-                    "📋 No logs found.\n\n"
-                    "Expected primary log file:\n"
-                    f"{Path.home() / '.langtars' / 'logs' / 'langtars.log'}\n\n"
-                    "Please run any !tars command once, then retry `!tars logs`."
-                )
-            )
-            return
-
-        full_log = "\n\n".join(output_blocks)
-        # Keep response size conservative for IM platform limits.
-        if len(full_log) > 3200:
-            full_log = "...(truncated)\n" + full_log[-3000:]
-        yield CommandReturn(text=full_log)
-
-    @staticmethod
-    async def result(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Get last background task result."""
-        if BackgroundTaskManager.is_running():
-            yield CommandReturn(text="⏳ Task is still running. Please try again in a moment.")
-            return
-
-        pending = BackgroundTaskManager.get_pending_result()
-        if pending:
-            BackgroundTaskManager._pending_result = None
-            yield CommandReturn(text=f"📬 Last task result (fallback):\n\n{pending}")
-            return
-
-        last = BackgroundTaskManager.get_last_result()
-        if last:
-            yield CommandReturn(text=f"📄 Last task result:\n\n{last}")
-            return
-
-        yield CommandReturn(text="No task result found.")
 
     @staticmethod
     async def what(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
@@ -874,85 +627,20 @@ class LanTARSCommand:
             # Store the new instruction for later execution
             BackgroundTaskManager.set_user_new_instruction(new_instruction)
             
-            yield CommandReturn(text=f"✅ 已停止当前任务，收到新指令：{new_instruction}\n\n请使用 !tars do {new_instruction} 来执行新任务。")
+            yield CommandReturn(text=f"✅ 已停止当前任务，收到新指令：{new_instruction}\n\n请使用 !tars {new_instruction} 来执行新任务。")
             return
         
-        # No task running, just inform user to use !tars do
-        yield CommandReturn(text=f"ℹ️ 当前没有正在执行的任务。\n\n请使用 !tars do {new_instruction} 来执行任务。")
-
-    @staticmethod
-    async def top(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle app listing."""
-        helper = await get_helper()
-        result = await helper.list_apps()
-
-        if result["success"]:
-            apps = result.get("apps", [])
-            if not apps:
-                yield CommandReturn(text="No applications running.")
-                return
-
-            lines = ["**Running Applications:**\n"]
-            lines.append("\n".join(f"• {app}" for app in apps))
-            yield CommandReturn(text="\n".join(lines))
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
-
-    @staticmethod
-    async def info(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle system info display."""
-        helper = await get_helper()
-        result = await helper.get_system_info()
-
-        if result["success"]:
-            info = result.get("info", {})
-            lines = ["**System Information:**\n"]
-            for key, value in info.items():
-                if isinstance(value, dict):
-                    continue
-                lines.append(f"• **{key}**: {value}")
-            yield CommandReturn(text="\n".join(lines))
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
-
-    @staticmethod
-    async def search(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle file search."""
-        params = context.crt_params
-        if not params:
-            yield CommandReturn(text="Usage: !tars search <pattern> [path]")
-            return
-
-        pattern = params[0]
-        path = params[1] if len(params) > 1 else "."
-
-        helper = await get_helper()
-        result = await helper.search_files(pattern, path)
-
-        if result["success"]:
-            files = result.get("files", [])
-            if not files:
-                yield CommandReturn(text=f"No files found matching '{pattern}'")
-                return
-
-            lines = [f"**Search Results for '{pattern}':**\n"]
-            for f in files[:20]:
-                lines.append(f"• {f}")
-
-            if len(files) > 20:
-                lines.append(f"... and {len(files) - 20} more")
-
-            yield CommandReturn(text="\n".join(lines))
-        else:
-            yield CommandReturn(text=f"Failed: {result.get('error', 'Unknown error')}")
+        # No task running, just inform user to use !tars
+        yield CommandReturn(text=f"ℹ️ 当前没有正在执行的任务。\n\n请使用 !tars {new_instruction} 来执行任务。")
 
     @staticmethod
     async def default(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle default case: answer pending question, otherwise show help."""
-        answer = " ".join(context.crt_params).strip() if context.crt_params else ""
+        """Handle default case: execute task (new or continue), answer pending question, or show help."""
+        task = " ".join(context.crt_params).strip() if context.crt_params else ""
 
+        # Handle pending user question
         if BackgroundTaskManager.has_pending_user_question():
-            if not answer:
+            if not task:
                 pending_q = BackgroundTaskManager.get_pending_user_question() or {}
                 msg = "🤔 插件正在等你回答:\n\n"
                 msg += f"问题: {pending_q.get('question', '')}\n"
@@ -963,44 +651,35 @@ class LanTARSCommand:
                 yield CommandReturn(text=msg)
                 return
 
-            if BackgroundTaskManager.submit_user_input(answer):
-                yield CommandReturn(text=f"✅ 已收到你的回答：{answer}")
+            if BackgroundTaskManager.submit_user_input(task):
+                yield CommandReturn(text=f"✅ 已收到你的回答：{task}")
             else:
                 yield CommandReturn(text="⚠️ 当前没有可接收回答的问题。")
             return
 
-        yield CommandReturn(text=LanTARSCommand._help_text())
-
-    @staticmethod
-    async def help(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Show explicit help command."""
-        yield CommandReturn(text=LanTARSCommand._help_text())
-
-    @staticmethod
-    async def auto(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
-        """Handle autonomous task planning using ReAct loop."""
-        params = context.crt_params
-        if not params:
-            yield CommandReturn(text="""Usage: !tars auto <task description>
-
-Example:
-  !tars auto Open Safari and search for AI news
-""")
+        # No task provided - show help
+        if not task:
+            yield CommandReturn(text=LanTARSCommand._help_text())
             return
 
         # Check if a task is already running
         from components.tools.planner import PlannerTool, TrueSubprocessPlanner, PlannerExecutor, SubprocessPlanner
 
         if BackgroundTaskManager.is_running() or TrueSubprocessPlanner.is_running():
-            yield CommandReturn(text="⚠️ A task is already running. Use !tars stop to stop it first.")
+            yield CommandReturn(text="⚠️ 任务正在运行中。使用 !tars stop 停止当前任务。")
             return
 
-        task = " ".join(params)
+        # Get user ID and set as current user
+        user_id = str(context.session.launcher_id) if context.session else None
+        if user_id:
+            BackgroundTaskManager.set_current_user(user_id)
 
+        # Determine if this is a continue task or new task
+        has_history = BackgroundTaskManager.has_conversation_state(user_id)
+        
         # Get config from the command's plugin instance
         config = _self_cmd.plugin.get_config()
         max_iterations = int(config.get("planner_max_iterations", 5) or 5)
-
         configured_model_uuid = config.get("planner_model_uuid", "")
 
         # Get available models
@@ -1041,8 +720,9 @@ Go to Pipelines → Configure → Select LLM Model
         
         # Initialize background task status
         BackgroundTaskManager.reset_task_status()
+        task_type = "继续" if has_history else "新任务"
         BackgroundTaskManager.set_task_status(
-            task_description=task,
+            task_description=f"{task_type}: {task}",
             step="任务已启动，正在初始化...",
             tool=""
         )
@@ -1083,7 +763,11 @@ Go to Pipelines → Configure → Select LLM Model
             if bot_uuid_notify:
                 notify_target_type = context.session.launcher_type.value
                 notify_target_id = context.session.launcher_id
-                start_msg = f"🚀 任务已启动！\n\n任务: {task[:100]}{'...' if len(task) > 100 else ''}\n\n使用 !tars what 查看进度"
+                if has_history:
+                    last_task = BackgroundTaskManager.get_conversation_state(user_id)[1]
+                    start_msg = f"🔄 继续任务！\n\n新指令: {task[:100]}{'...' if len(task) > 100 else ''}\n基于上次: {last_task[:50] if last_task else '未知'}...\n\n使用 !tars what 查看进度"
+                else:
+                    start_msg = f"🚀 任务已启动！\n\n任务: {task[:100]}{'...' if len(task) > 100 else ''}\n\n使用 !tars what 查看进度"
                 await _self_cmd.plugin.send_message(
                     bot_uuid=bot_uuid_notify,
                     target_type=notify_target_type,
@@ -1093,13 +777,12 @@ Go to Pipelines → Configure → Select LLM Model
         except Exception as e:
             logger.warning(f"Failed to send task start notification: {e}")
 
-        # Start task in background and immediately return
-        # This allows stop command to be processed while task runs
+        # Start task in background
         try:
             bot_uuid: str | None = None
             try:
                 bot_uuid = await context.get_bot_uuid()
-                logger.info(f"[AUTO] Got bot_uuid from context: {bot_uuid}")
+                logger.info(f"[DEFAULT] Got bot_uuid from context: {bot_uuid}")
             except Exception as e:
                 logger.warning(f"Failed to get bot uuid for background send: {e}")
             if not bot_uuid:
@@ -1107,12 +790,12 @@ Go to Pipelines → Configure → Select LLM Model
                     conversation = getattr(context.session, "using_conversation", None)
                     if conversation and getattr(conversation, "bot_uuid", None):
                         bot_uuid = str(conversation.bot_uuid)
-                        logger.info(f"[AUTO] Got bot_uuid from conversation: {bot_uuid}")
+                        logger.info(f"[DEFAULT] Got bot_uuid from conversation: {bot_uuid}")
                 except Exception:
                     pass
             target_type = context.session.launcher_type.value
             raw_target_id = context.session.launcher_id
-            logger.info(f"[AUTO] target_type={target_type}, raw_target_id={raw_target_id}, bot_uuid={bot_uuid}")
+            logger.info(f"[DEFAULT] target_type={target_type}, raw_target_id={raw_target_id}, bot_uuid={bot_uuid}")
 
             def _candidate_target_ids(raw_id: Any) -> list[Any]:
                 ids: list[Any] = []
@@ -1145,17 +828,17 @@ Go to Pipelines → Configure → Select LLM Model
 
             async def _auto_execute_result_reply() -> None:
                 """Auto-run result behavior when task ends via send_message (query-independent)."""
-                logger.info(f"[AUTO] _auto_execute_result_reply called, bot_uuid={bot_uuid}, target_type={target_type}, raw_target_id={raw_target_id}")
+                logger.info(f"[DEFAULT] _auto_execute_result_reply called, bot_uuid={bot_uuid}, target_type={target_type}, raw_target_id={raw_target_id}")
                 pending = BackgroundTaskManager.get_pending_result()
                 if pending:
-                    msg = f"📬 Last task result (fallback):\n\n{pending}"
+                    msg = f"📬 任务结果:\n\n{pending}"
                 else:
                     last = BackgroundTaskManager.get_last_result()
                     if last:
-                        msg = f"📄 Last task result:\n\n{last}"
+                        msg = f"📄 任务结果:\n\n{last}"
                     else:
-                        msg = "No task result found."
-                logger.info(f"[AUTO] Message to send: {msg[:100]}...")
+                        msg = "任务完成，无结果。"
+                logger.info(f"[DEFAULT] Message to send: {msg[:100]}...")
                 try:
                     if not bot_uuid:
                         raise RuntimeError("missing bot_uuid")
@@ -1163,7 +846,7 @@ Go to Pipelines → Configure → Select LLM Model
                     errors: list[str] = []
                     for cid in _candidate_target_ids(raw_target_id):
                         try:
-                            logger.info(f"[AUTO] Trying to send to bot_uuid={bot_uuid}, target_type={target_type}, target_id={cid}")
+                            logger.info(f"[DEFAULT] Trying to send to bot_uuid={bot_uuid}, target_type={target_type}, target_id={cid}")
                             await _self_cmd.plugin.send_message(
                                 bot_uuid=bot_uuid,
                                 target_type=target_type,
@@ -1174,10 +857,9 @@ Go to Pipelines → Configure → Select LLM Model
                             sent = True
                             break
                         except Exception as send_err:
-                            logger.warning(f"[AUTO] send_message failed for {cid}: {send_err}")
+                            logger.warning(f"[DEFAULT] send_message failed for {cid}: {send_err}")
                             errors.append(f"{cid!r}: {send_err}")
                     if sent:
-                        # Only clear pending after a successful auto send.
                         if pending:
                             BackgroundTaskManager._pending_result = None
                     else:
@@ -1190,9 +872,9 @@ Go to Pipelines → Configure → Select LLM Model
                 try:
                     result = await _self_cmd.plugin.browser_cleanup()
                     if isinstance(result, dict) and not result.get("success", True):
-                        logger.warning(f"[AUTO] Browser cleanup reported failure ({phase}): {result}")
+                        logger.warning(f"[DEFAULT] Browser cleanup reported failure ({phase}): {result}")
                 except Exception as cleanup_err:
-                    logger.warning(f"[AUTO] Browser cleanup failed ({phase}): {cleanup_err}")
+                    logger.warning(f"[DEFAULT] Browser cleanup failed ({phase}): {cleanup_err}")
 
             async def run_task():
                 try:
@@ -1205,8 +887,342 @@ Go to Pipelines → Configure → Select LLM Model
                     await registry.initialize()
 
                     executor = PlannerExecutor()
-                    async for partial_result in executor.execute_task_streaming(
-                        task=task,
+                    
+                    if has_history:
+                        # Continue with existing conversation
+                        last_messages, last_task_desc, last_registry, last_llm_uuid = BackgroundTaskManager.get_conversation_state(user_id)
+                        
+                        # Import necessary modules
+                        from langbot_plugin.api.entities.builtin.provider import message as provider_message
+                        
+                        # Build continuation messages based on saved conversation
+                        messages = list(last_messages) if last_messages else []
+                        
+                        # Add the new instruction as a user message
+                        messages.append(provider_message.Message(
+                            role="user",
+                            content=f"用户继续指令: {task}\n\n请基于之前的对话上下文，继续执行这个新指令。"
+                        ))
+                        
+                        async for partial_result in executor.execute_task_streaming_with_messages(
+                            messages=messages,
+                            task=f"继续: {task}",
+                            original_task=last_task_desc,
+                            max_iterations=max_iterations,
+                            llm_model_uuid=last_llm_uuid or llm_model_uuid,
+                            plugin=_self_cmd.plugin,
+                            helper_plugin=_self_cmd.plugin,
+                            registry=last_registry or registry,
+                            session=context.session,
+                            query_id=context.query_id
+                        ):
+                            BackgroundTaskManager._last_result = partial_result
+                            await asyncio.sleep(0.1)
+                    else:
+                        # New task
+                        async for partial_result in executor.execute_task_streaming(
+                            task=task,
+                            max_iterations=max_iterations,
+                            llm_model_uuid=llm_model_uuid,
+                            plugin=_self_cmd.plugin,
+                            helper_plugin=_self_cmd.plugin,
+                            registry=registry,
+                            session=context.session,
+                            query_id=context.query_id
+                        ):
+                            BackgroundTaskManager._last_result = partial_result
+                            await asyncio.sleep(0.1)
+                    
+                    if BackgroundTaskManager._last_result:
+                        await _reply_background(f"✅ 任务完成。\n\n{BackgroundTaskManager._last_result}")
+                    else:
+                        await _reply_background("✅ 任务完成。")
+                    await _auto_execute_result_reply()
+                except asyncio.CancelledError:
+                    BackgroundTaskManager._last_result = "任务被用户取消。"
+                    await _reply_background("🛑 任务被用户取消。")
+                    await _auto_execute_result_reply()
+                    raise
+                except Exception as e:
+                    import traceback
+                    BackgroundTaskManager._last_result = f"Error: {str(e)}\n{traceback.format_exc()}"
+                    await _reply_background(f"❌ 任务错误:\n{BackgroundTaskManager._last_result}")
+                    await _auto_execute_result_reply()
+                finally:
+                    SubprocessPlanner.remove_run_file()
+                    if bool(config.get("auto_cleanup_browser_on_finish", False)):
+                        await _cleanup_browser("run_task.finally")
+                    BackgroundTaskManager._task_running = False
+                    BackgroundTaskManager._current_step = "任务已完成"
+
+            BackgroundTaskManager._last_result = None
+            BackgroundTaskManager._pending_result = None
+            bg_task = asyncio.create_task(run_task())
+            BackgroundTaskManager._task_running = True
+            BackgroundTaskManager._bg_task = bg_task
+
+            if has_history:
+                yield CommandReturn(text=f"🔄 继续任务已启动！基于上次对话继续执行。使用 !tars stop 取消。\n")
+            else:
+                yield CommandReturn(text=f"🚀 任务已启动！使用 !tars stop 取消。\n")
+
+        except Exception as e:
+            import traceback
+            yield CommandReturn(text=f"Error starting task: {str(e)}\n\n{traceback.format_exc()}")
+
+    @staticmethod
+    async def help(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Show explicit help command."""
+        yield CommandReturn(text=LanTARSCommand._help_text())
+
+    @staticmethod
+    async def reset(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Reset conversation history to start fresh."""
+        # Get user ID from context
+        user_id = str(context.session.launcher_id) if context.session else None
+        
+        if not user_id:
+            yield CommandReturn(text="⚠️ 无法获取用户ID，无法重置对话历史。")
+            return
+        
+        # Check if there's a conversation state to clear
+        if BackgroundTaskManager.has_conversation_state(user_id):
+            BackgroundTaskManager.clear_conversation_state(user_id)
+            yield CommandReturn(text="✅ 对话历史已清空！下次使用 !tars 将开始全新的任务。")
+        else:
+            yield CommandReturn(text="ℹ️ 当前没有保存的对话历史。")
+
+    # Legacy code below - keeping for reference but not used
+    @staticmethod
+    async def _legacy_continue(_self_cmd: Command, context: ExecuteContext) -> AsyncGenerator[CommandReturn, None]:
+        """Continue with a new instruction based on the last completed task's conversation."""
+        params = context.crt_params
+        if not params:
+            yield CommandReturn(text="""Usage: !tars continue <new instruction>
+
+此命令允许你基于上次任务的对话历史继续执行新指令。
+AI 会记住之前的上下文，可以更好地理解你的新需求。
+
+Example:
+  !tars continue 把刚才的结果保存到文件
+  !tars continue 再帮我搜索一下相关的内容
+""")
+            return
+
+        # Check if there's a saved conversation state
+        if not BackgroundTaskManager.has_conversation_state():
+            yield CommandReturn(text="⚠️ 没有可继续的对话历史。请先使用 !tars auto <任务> 执行一个任务。")
+            return
+
+        # Check if a task is already running
+        from components.tools.planner import PlannerTool, TrueSubprocessPlanner, PlannerExecutor, SubprocessPlanner
+
+        if BackgroundTaskManager.is_running() or TrueSubprocessPlanner.is_running():
+            yield CommandReturn(text="⚠️ A task is already running. Use !tars stop to stop it first.")
+            return
+
+        new_instruction = " ".join(params)
+
+        # Get saved conversation state
+        last_messages, last_task, last_registry, last_llm_model_uuid = BackgroundTaskManager.get_conversation_state()
+
+        if not last_messages or not last_llm_model_uuid:
+            yield CommandReturn(text="⚠️ 对话历史不完整，无法继续。请使用 !tars auto <任务> 开始新任务。")
+            return
+
+        # Get config from the command's plugin instance
+        config = _self_cmd.plugin.get_config()
+        max_iterations = int(config.get("planner_max_iterations", 5) or 5)
+
+        # Use the saved LLM model UUID
+        llm_model_uuid = last_llm_model_uuid
+
+        # Always reset state before starting a new task
+        PlannerTool.reset_task_state()
+        
+        # Initialize background task status
+        BackgroundTaskManager.reset_task_status()
+        BackgroundTaskManager.set_task_status(
+            task_description=f"继续: {new_instruction}",
+            step="任务已启动，正在初始化...",
+            tool=""
+        )
+        BackgroundTaskManager._task_running = True
+        
+        # Set message context for confirmation notifications
+        try:
+            bot_uuid_ctx = None
+            try:
+                bot_uuid_ctx = await context.get_bot_uuid()
+            except Exception:
+                pass
+            if not bot_uuid_ctx:
+                conversation = getattr(context.session, "using_conversation", None)
+                if conversation and getattr(conversation, "bot_uuid", None):
+                    bot_uuid_ctx = str(conversation.bot_uuid)
+            if bot_uuid_ctx:
+                BackgroundTaskManager.set_message_context(
+                    bot_uuid=bot_uuid_ctx,
+                    target_type=context.session.launcher_type.value,
+                    target_id=context.session.launcher_id
+                )
+        except Exception as e:
+            logger.warning(f"Failed to set message context: {e}")
+
+        # Send task start notification to user
+        try:
+            bot_uuid_notify: str | None = None
+            try:
+                bot_uuid_notify = await context.get_bot_uuid()
+            except Exception:
+                pass
+            if not bot_uuid_notify:
+                conversation = getattr(context.session, "using_conversation", None)
+                if conversation and getattr(conversation, "bot_uuid", None):
+                    bot_uuid_notify = str(conversation.bot_uuid)
+            
+            if bot_uuid_notify:
+                notify_target_type = context.session.launcher_type.value
+                notify_target_id = context.session.launcher_id
+                start_msg = f"🔄 继续任务！\n\n新指令: {new_instruction[:100]}{'...' if len(new_instruction) > 100 else ''}\n基于上次任务: {last_task[:50] if last_task else '未知'}...\n\n使用 !tars what 查看进度"
+                await _self_cmd.plugin.send_message(
+                    bot_uuid=bot_uuid_notify,
+                    target_type=notify_target_type,
+                    target_id=notify_target_id,
+                    message_chain=MessageChain([Plain(text=start_msg)]),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send task start notification: {e}")
+
+        # Start task in background
+        try:
+            bot_uuid: str | None = None
+            try:
+                bot_uuid = await context.get_bot_uuid()
+                logger.info(f"[CONTINUE] Got bot_uuid from context: {bot_uuid}")
+            except Exception as e:
+                logger.warning(f"Failed to get bot uuid for background send: {e}")
+            if not bot_uuid:
+                try:
+                    conversation = getattr(context.session, "using_conversation", None)
+                    if conversation and getattr(conversation, "bot_uuid", None):
+                        bot_uuid = str(conversation.bot_uuid)
+                        logger.info(f"[CONTINUE] Got bot_uuid from conversation: {bot_uuid}")
+                except Exception:
+                    pass
+            target_type = context.session.launcher_type.value
+            raw_target_id = context.session.launcher_id
+            logger.info(f"[CONTINUE] target_type={target_type}, raw_target_id={raw_target_id}, bot_uuid={bot_uuid}")
+
+            def _candidate_target_ids(raw_id: Any) -> list[Any]:
+                ids: list[Any] = []
+                if raw_id is None:
+                    return ids
+                ids.append(raw_id)
+                sid = str(raw_id)
+                if sid not in [str(x) for x in ids]:
+                    ids.append(sid)
+                if sid.isdigit():
+                    try:
+                        iid = int(sid)
+                        if str(iid) not in [str(x) for x in ids]:
+                            ids.append(iid)
+                    except Exception:
+                        pass
+                return ids
+
+            async def _reply_background(text: str) -> None:
+                """Queue task result for auto-show on next !tars command."""
+                try:
+                    if not text:
+                        return
+                    safe_text = text if len(text) <= 3000 else ("...(truncated)\n" + text[-2800:])
+                    BackgroundTaskManager._pending_result = safe_text
+                    logger.info("Background task result queued. It will auto-show on next !tars command.")
+                except Exception as e:
+                    BackgroundTaskManager._pending_result = text if len(text) <= 3000 else ("...(truncated)\n" + text[-2800:])
+                    logger.warning(f"Failed to queue background result: {e}")
+
+            async def _auto_execute_result_reply() -> None:
+                """Auto-run result behavior when task ends via send_message (query-independent)."""
+                logger.info(f"[CONTINUE] _auto_execute_result_reply called, bot_uuid={bot_uuid}, target_type={target_type}, raw_target_id={raw_target_id}")
+                pending = BackgroundTaskManager.get_pending_result()
+                if pending:
+                    msg = f"📬 Last task result (fallback):\n\n{pending}"
+                else:
+                    last = BackgroundTaskManager.get_last_result()
+                    if last:
+                        msg = f"📄 Last task result:\n\n{last}"
+                    else:
+                        msg = "No task result found."
+                logger.info(f"[CONTINUE] Message to send: {msg[:100]}...")
+                try:
+                    if not bot_uuid:
+                        raise RuntimeError("missing bot_uuid")
+                    sent = False
+                    errors: list[str] = []
+                    for cid in _candidate_target_ids(raw_target_id):
+                        try:
+                            logger.info(f"[CONTINUE] Trying to send to bot_uuid={bot_uuid}, target_type={target_type}, target_id={cid}")
+                            await _self_cmd.plugin.send_message(
+                                bot_uuid=bot_uuid,
+                                target_type=target_type,
+                                target_id=cid,
+                                message_chain=MessageChain([Plain(text=msg)]),
+                            )
+                            logger.info(f"Auto result sent via send_message to {target_type}:{cid!r}")
+                            sent = True
+                            break
+                        except Exception as send_err:
+                            logger.warning(f"[CONTINUE] send_message failed for {cid}: {send_err}")
+                            errors.append(f"{cid!r}: {send_err}")
+                    if sent:
+                        if pending:
+                            BackgroundTaskManager._pending_result = None
+                    else:
+                        raise RuntimeError(" | ".join(errors) if errors else "unknown send error")
+                except Exception as e:
+                    logger.warning(f"Auto result send failed, keep pending for next !tars command: {e}")
+
+            async def _cleanup_browser(phase: str) -> None:
+                """Best-effort cleanup for Playwright browser resources."""
+                try:
+                    result = await _self_cmd.plugin.browser_cleanup()
+                    if isinstance(result, dict) and not result.get("success", True):
+                        logger.warning(f"[CONTINUE] Browser cleanup reported failure ({phase}): {result}")
+                except Exception as cleanup_err:
+                    logger.warning(f"[CONTINUE] Browser cleanup failed ({phase}): {cleanup_err}")
+
+            async def run_continue_task():
+                try:
+                    # Keep the run file semantics so stop checks stay consistent
+                    SubprocessPlanner.create_run_file()
+
+                    # Use the saved registry or initialize a new one
+                    registry = last_registry
+                    if not registry:
+                        from components.tools.planner_tools.registry import ToolRegistry
+                        registry = ToolRegistry(_self_cmd.plugin)
+                        await registry.initialize()
+
+                    # Import necessary modules
+                    from langbot_plugin.api.entities.builtin.provider import message as provider_message
+                    from components.tools.planner.prompts import PromptManager
+
+                    # Build continuation messages based on saved conversation
+                    messages = list(last_messages)  # Copy the saved messages
+                    
+                    # Add the new instruction as a user message
+                    messages.append(provider_message.Message(
+                        role="user",
+                        content=f"用户继续指令: {new_instruction}\n\n请基于之前的对话上下文，继续执行这个新指令。"
+                    ))
+
+                    executor = PlannerExecutor()
+                    async for partial_result in executor.execute_task_streaming_with_messages(
+                        messages=messages,
+                        task=f"继续: {new_instruction}",
+                        original_task=last_task,
                         max_iterations=max_iterations,
                         llm_model_uuid=llm_model_uuid,
                         plugin=_self_cmd.plugin,
@@ -1237,57 +1253,18 @@ Go to Pipelines → Configure → Select LLM Model
                 finally:
                     SubprocessPlanner.remove_run_file()
                     if bool(config.get("auto_cleanup_browser_on_finish", False)):
-                        await _cleanup_browser("run_task.finally")
+                        await _cleanup_browser("run_continue_task.finally")
                     BackgroundTaskManager._task_running = False
                     BackgroundTaskManager._current_step = "任务已完成"
 
-            async def run_subprocess_task():
-                try:
-                    async for partial_result in TrueSubprocessPlanner.execute_in_subprocess(
-                        task=task,
-                        max_iterations=max_iterations,
-                        llm_model_uuid=llm_model_uuid,
-                        plugin=_self_cmd.plugin,
-                        helper_plugin=_self_cmd.plugin,
-                        session=context.session,
-                        query_id=context.query_id
-                    ):
-                        # Store latest result for stop command to retrieve
-                        BackgroundTaskManager._last_result = partial_result
-                        # Small delay to allow stop command to be processed
-                        await asyncio.sleep(0.1)
-                    if BackgroundTaskManager._last_result:
-                        await _reply_background(BackgroundTaskManager._last_result)
-                    else:
-                        await _reply_background("✅ Task completed.")
-                    await _auto_execute_result_reply()
-                except Exception as e:
-                    import traceback
-                    BackgroundTaskManager._last_result = f"Error: {str(e)}\n{traceback.format_exc()}"
-                    await _reply_background(f"❌ Task error:\n{BackgroundTaskManager._last_result}")
-                    await _auto_execute_result_reply()
-                finally:
-                    if bool(config.get("auto_cleanup_browser_on_finish", False)):
-                        await _cleanup_browser("run_subprocess_task.finally")
-                    BackgroundTaskManager._task_running = False
-                    BackgroundTaskManager._current_step = "任务已完成"
-
-            # NOTE:
-            # LLM invocation depends on plugin_runtime_handler from the current runtime.
-            # This handler is not available in standalone subprocess-created plugin instances.
-            # Therefore default to in-process background execution; keep subprocess path optional.
-            use_true_subprocess = bool(config.get("planner_use_true_subprocess", False))
             BackgroundTaskManager._last_result = None
             BackgroundTaskManager._pending_result = None
-            bg_task = asyncio.create_task(run_subprocess_task() if use_true_subprocess else run_task())
+            bg_task = asyncio.create_task(run_continue_task())
             BackgroundTaskManager._task_running = True
             BackgroundTaskManager._bg_task = bg_task
 
-            if use_true_subprocess:
-                yield CommandReturn(text="🚀 Task started in background (subprocess mode). Use !tars stop to cancel.\n")
-            else:
-                yield CommandReturn(text="🚀 Task started in background. Use !tars stop to cancel.\n")
+            yield CommandReturn(text=f"🔄 继续任务已启动！基于上次对话继续执行。Use !tars stop to cancel.\n")
 
         except Exception as e:
             import traceback
-            yield CommandReturn(text=f"Error starting task: {str(e)}\n\n{traceback.format_exc()}")
+            yield CommandReturn(text=f"Error starting continue task: {str(e)}\n\n{traceback.format_exc()}")
