@@ -47,7 +47,10 @@ LangTARS 採用不同的方式：
    ```bash
    pip install -r requirements.txt
    ```
-3. 建立 `.env` 檔案並設定
+3. 參照 `.env.example` 新建一個 `.env` 檔案並設定（端口地址應與 LangBot 插件地址相同）：
+   ```bash
+   cp .env.example .env
+   ```
 4. 執行插件：
    ```bash
    lbp run

@@ -47,7 +47,10 @@ LangTARS takes a different approach:
    ```bash
    pip install -r requirements.txt
    ```
-3. Create a `.env` file with your configuration
+3. Create a `.env` file by copying from `.env.example` and configure it (the port should match the LangBot plugin address):
+   ```bash
+   cp .env.example .env
+   ```
 4. Run the plugin:
    ```bash
    lbp run
@@ -78,22 +81,22 @@ LangTARS supports multiple browser control methods:
 **macOS:**
 | Command Example | Browser | Description |
 |----------|---------|------|
-| `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
-| `!tars auto Open Safari and visit github` | Safari Browser | Uses real Safari, requires AppleScript permission |
-| `!tars auto Open Chrome and visit github` | Chrome Browser | Uses real Chrome, requires AppleScript permission |
+| `!tars Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
+| `!tars Open Safari and visit github` | Safari Browser | Uses real Safari, requires AppleScript permission |
+| `!tars Open Chrome and visit github` | Chrome Browser | Uses real Chrome, requires AppleScript permission |
 
 **Windows:**
 | Command Example | Browser | Description |
 |----------|---------|------|
-| `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
-| `!tars auto Open Chrome and visit github` | Chrome Browser | Uses real Chrome via PowerShell/UI Automation |
-| `!tars auto Open Edge and visit github` | Edge Browser | Uses real Edge via PowerShell/UI Automation |
+| `!tars Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
+| `!tars Open Chrome and visit github` | Chrome Browser | Uses real Chrome via PowerShell/UI Automation |
+| `!tars Open Edge and visit github` | Edge Browser | Uses real Edge via PowerShell/UI Automation |
 
 **Linux:**
 | Command Example | Browser | Description |
 |----------|---------|------|
-| `!tars auto Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
-| `!tars auto Open firefox and visit github` | Firefox Browser | Uses xdg-open or direct command |
+| `!tars Visit github.com` | Playwright (Chromium) | Default, no extra permissions needed |
+| `!tars Open firefox and visit github` | Firefox Browser | Uses xdg-open or direct command |
 
 The AI will:
 1. Understand your request
