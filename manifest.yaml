@@ -93,7 +93,7 @@ spec:
       description:
         en_US: 'Maximum number of ReAct loop iterations for autonomous task planning'
         zh_Hans: '自主任务规划的最大 ReAct 循环迭代次数'
-      default: 5
+      default: 100
     - name: planner_model_uuid
       type: llm-model-selector
       required: false
@@ -205,9 +205,6 @@ spec:
         zh_Hans: 'Skills 目录路径（默认：~/.claude/skills）'
       default: ~/.claude/skills
   components:
-    Command:
-      fromDirs:
-      - path: components/commands/
     Tool:
       fromDirs:
       - path: components/tools/

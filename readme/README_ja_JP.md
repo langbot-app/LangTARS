@@ -20,7 +20,7 @@
 
 ## LangTARS とは？
 
-LangTARS は **Nanobot** の ReAct コンセプトを元に開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで **Mac、Windows PC、または Linux システム** を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
+LangTARS は**モダンAgent**の ReAct コンセプトに基づいて開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで **Mac、Windows PC、または Linux システム** を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
 
 [OpenClaw](https://github.com/openclaw/openclaw) と同様に、LangTARS は AI アシスタントがコンピュータで実際の操作を実行できますが、LangBot プラグインの洗練さと洗練さを備えています。
 

@@ -769,6 +769,8 @@ class PlannerExecutor:
                     
                     if parsed.type == ResponseType.DONE:
                         logger.warning(f"[{iteration+1}] 任务完成: {parsed.content[:100]}")
+                        # Save conversation state for future continue
+                        self._save_conversation_state(messages, task, registry, llm_model_uuid)
                         yield parsed.content
                         return
                     
@@ -864,6 +866,8 @@ class PlannerExecutor:
                     content=PromptManager.get_empty_response_hint()
                 ))
         
+        # Save conversation state even if max iterations reached
+        self._save_conversation_state(messages, task, registry, llm_model_uuid)
         yield f"Max iterations ({max_iterations}) reached. Task incomplete."
     
     async def _call_llm_with_stop_check(self, plugin, llm_model_uuid: str, messages: list):
@@ -989,3 +993,222 @@ class PlannerExecutor:
         """Get tool registry"""
         from .tool import PlannerTool
         return await PlannerTool()._get_tool_registry(plugin)
+
+    async def execute_task_streaming_with_messages(
+        self,
+        messages: list,
+        task: str,
+        original_task: str | None,
+        max_iterations: int,
+        llm_model_uuid: str,
+        plugin,
+        helper_plugin=None,
+        registry=None,
+        session=None,
+        query_id: int = 0,
+    ) -> AsyncGenerator[str, None]:
+        """Execute task with pre-existing messages - for continue functionality.
+        
+        This method allows continuing a conversation with existing message history.
+        """
+        # Register current task for cancellation
+        current_task = asyncio.current_task()
+        self._state_manager.set_asyncio_task(current_task)
+        
+        # Reset state but keep messages
+        self._state_manager.reset()
+        self._state_manager.create_task("continue", task)
+        
+        if not messages:
+            yield "Error: No messages provided."
+            return
+        
+        if not llm_model_uuid:
+            yield "Error: No LLM model specified."
+            return
+        
+        yield f"继续执行任务: {task[:50]}...\n"
+        logger.warning(f"=== 继续执行任务: {task[:50]}... (max_iterations={max_iterations}) ===")
+        
+        # Get config
+        config = plugin.get_config() if plugin else {}
+        rate_limit_seconds = float(config.get('planner_rate_limit_seconds', 1))
+        
+        invalid_response_count = 0
+        max_invalid_responses = 5
+        
+        # ReAct loop
+        for iteration in range(max_iterations):
+            await asyncio.sleep(0)
+            
+            if self._state_manager.is_stopped():
+                yield "Task stopped by user."
+                return
+            
+            # Rate limiting
+            current_time = time.time()
+            last_call_time = self._state_manager.get_last_llm_call_time()
+            if current_time - last_call_time < rate_limit_seconds:
+                await asyncio.sleep(rate_limit_seconds - (current_time - last_call_time))
+                if self._state_manager.is_stopped():
+                    yield "Task stopped by user."
+                    return
+            self._state_manager.update_last_llm_call_time(time.time())
+            
+            call_count = self._state_manager.increment_llm_call_count()
+            logger.warning(f"[{iteration+1}/{max_iterations}] LLM 调用开始 (继续): {task[:30]}...")
+            
+            if self._state_manager.is_stopped():
+                logger.warning("Stop detected BEFORE LLM call")
+                yield "Task stopped by user."
+                return
+            
+            # Call LLM
+            try:
+                response = await self._call_llm_with_stop_check(plugin, llm_model_uuid, messages)
+            except asyncio.CancelledError:
+                self._state_manager.stop_current_task()
+                SubprocessPlanner.clear_user_stop_file()
+                yield "Task stopped by user."
+                return
+            except Exception as e:
+                logger.error(f"LLM call error: {e}")
+                continue
+            
+            await asyncio.sleep(0)
+            
+            if self._state_manager.is_stopped():
+                logger.warning("Stop detected AFTER LLM call")
+                yield "Task stopped by user."
+                return
+            
+            # Process response (same logic as execute_task_streaming)
+            if response.content:
+                content_str = str(response.content)
+                logger.warning(f"[{iteration+1}] LLM 思考过程:\n{content_str[:1000]}")
+                
+                if not response.tool_calls:
+                    parsed = self._parser.parse(content_str)
+                    
+                    if parsed.type == ResponseType.DONE:
+                        logger.warning(f"[{iteration+1}] 任务完成: {parsed.content[:100]}")
+                        # Save conversation state for future continue
+                        self._save_conversation_state(messages, task, registry, llm_model_uuid)
+                        yield parsed.content
+                        return
+                    
+                    if parsed.type == ResponseType.WORKING:
+                        logger.warning(f"[{iteration+1}] 工作中: {parsed.content}")
+                        invalid_response_count = 0
+                        messages.append(provider_message.Message(
+                            role="user",
+                            content=PromptManager.get_continue_task_prompt(parsed.content)
+                        ))
+                        continue
+                    
+                    if parsed.type == ResponseType.NEED_SKILL:
+                        skill_manager = get_skill_manager()
+                        if skill_manager.is_error_state(parsed.content):
+                            logger.warning(f"[{iteration+1}] 检测到错误状态")
+                            yield f"任务无法完成: {parsed.content}"
+                            return
+                        yield f"需要安装技能: {parsed.content}"
+                        return
+                    
+                    if parsed.type == ResponseType.TOOL_CALL and parsed.tool_call:
+                        invalid_response_count = 0
+                        tool_name = parsed.tool_call.name
+                        logger.warning(f"[{iteration+1}] 调用工具: {tool_name}")
+                        
+                        from .parser import MockToolCall
+                        mock_call = MockToolCall(parsed.tool_call.name, parsed.tool_call.arguments)
+                        result = await self._execute_tool(mock_call, helper_plugin or plugin, registry)
+                        logger.warning(f"[{iteration+1}] 工具结果: {str(result)[:100]}")
+                        
+                        await asyncio.sleep(0)
+                        if self._state_manager.is_stopped():
+                            yield "Task stopped by user."
+                            return
+                        
+                        messages.append(provider_message.Message(
+                            role="user",
+                            content=PromptManager.get_streaming_tool_result_hint(result)
+                        ))
+                        continue
+                    
+                    # Invalid response
+                    invalid_response_count += 1
+                    logger.warning(f"[{iteration+1}] 无法识别的响应格式 ({invalid_response_count}/{max_invalid_responses})")
+                    
+                    if invalid_response_count >= max_invalid_responses:
+                        yield f"任务无法完成: LLM 连续返回无效响应格式。最后的响应: {content_str[:200]}"
+                        return
+                    
+                    messages.append(provider_message.Message(
+                        role="user",
+                        content=PromptManager.get_invalid_response_hint(content_str)
+                    ))
+                    continue
+            
+            # Handle tool_calls
+            if response.tool_calls:
+                invalid_response_count = 0
+                for tool_call in response.tool_calls:
+                    tool_name = tool_call.function.name if hasattr(tool_call, 'function') else 'unknown'
+                    logger.warning(f"[{iteration+1}] 调用工具: {tool_name}")
+                    
+                    result = await self._execute_tool(tool_call, helper_plugin or plugin, registry)
+                    logger.warning(f"[{iteration+1}] 工具结果: {str(result)[:100]}")
+                    
+                    await asyncio.sleep(0)
+                    if self._state_manager.is_stopped():
+                        yield "Task stopped by user."
+                        return
+                    
+                    messages.append(provider_message.Message(
+                        role="tool",
+                        content=json.dumps(result),
+                        tool_call_id=tool_call.id
+                    ))
+                    messages.append(provider_message.Message(
+                        role="user",
+                        content=PromptManager.get_streaming_tool_result_hint(result)
+                    ))
+            
+            # Empty response
+            if not response.content and not response.tool_calls:
+                invalid_response_count += 1
+                logger.warning(f"[{iteration+1}] LLM 返回空响应 ({invalid_response_count}/{max_invalid_responses})")
+                
+                if invalid_response_count >= max_invalid_responses:
+                    yield "任务无法完成: LLM 连续返回空响应"
+                    return
+                
+                messages.append(provider_message.Message(
+                    role="user",
+                    content=PromptManager.get_empty_response_hint()
+                ))
+        
+        # Save conversation state even if max iterations reached
+        self._save_conversation_state(messages, task, registry, llm_model_uuid)
+        yield f"Max iterations ({max_iterations}) reached. Task incomplete."
+
+    def _save_conversation_state(
+        self,
+        messages: list,
+        task: str,
+        registry,
+        llm_model_uuid: str
+    ) -> None:
+        """Save conversation state for continue functionality."""
+        try:
+            from components.commands.langtars import BackgroundTaskManager
+            BackgroundTaskManager.save_conversation_state(
+                messages=messages,
+                task=task,
+                registry=registry,
+                llm_model_uuid=llm_model_uuid
+            )
+            logger.info(f"Saved conversation state with {len(messages)} messages")
+        except Exception as e:
+            logger.warning(f"Failed to save conversation state: {e}")

@@ -19,7 +19,7 @@
 
 ## What is LangTARS?
 
-LangTARS is a **native Claw-like plugin** inspired by Nanobot's ReAct philosophy, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your **Mac, Windows PC, or Linux system** through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
+LangTARS is a **native LangBot plugin** developed based on the ReAct philosophy of **modern Agents**, designed to bring the **OpenClaw** experience to LangBot users. It enables you to control your **Mac, Windows PC, or Linux system** through IM messages using autonomous AI task planning. Like **TARS** from *Interstellar*, it works faithfully for you.
 
 Like [OpenClaw](https://github.com/openclaw/openclaw), LangTARS allows AI assistants to execute real actions on your computer—but with the simplicity and elegance of a LangBot plugin.
 
@@ -55,17 +55,21 @@ LangTARS takes a different approach:
 
 > 📱 **Recommended**: Use LangTARS on **Telegram** or **DingTalk** platform for the best experience.
 
-## Main Command
+## Usage
 
-### `!tars auto` — Autonomous Task Planning
+### `!tars <task>` — AI Task Execution
 
-This is the **primary command** that makes LangTARS special. Simply describe what you want to do, and the AI will autonomously plan and execute the task using available tools.
+Simply describe what you want to do, and the AI will autonomously plan and execute the task.
 
-- `!tars auto Open Safari, visit langbot.app, scrape elements and tell me`
-- `!tars auto Create a new note with title and content "hello"`
-- `!tars auto Help me organize the files on my desktop`
+**Examples:**
+- `!tars Open Safari, visit langbot.app, scrape elements and tell me`
+- `!tars Create a new note with title and content "hello"`
+- `!tars Help me organize the files on my desktop`
+- `!tars Save the result to a file` (continues from previous task if available)
 
-- <code><del>!tars auto Cook me some dishes.</del></code>
+- <code><del>!tars Cook me some dishes.</del></code>
+
+> 💡 **Tip**: If you have a previous task history, LangTARS will automatically continue from where you left off. Just describe what you want to do next!
 
 ### Browser Control
 
@@ -97,57 +101,16 @@ The AI will:
 3. Execute them one by one using shell commands, file operations, app control, etc.
 4. Report back with results
 
-You can **stop** a running task at any time:
-```
-!tars stop
-```
-
-Check task status:
-```
-!tars status
-```
-
-View recent plugin logs:
-```
-!tars logs [lines]
-```
-
-Get the last auto task result:
-```
-!tars result
-```
-
-## Task Control Commands
+## Control Commands
 
 | Command | Description |
 |---------|-------------|
 | `!tars stop` | Stop the currently running task |
-| `!tars status` | View current task status |
 | `!tars what` | What is the agent doing now |
+| `!tars reset` | Clear conversation history and start fresh |
 | `!tars yes` | Confirm dangerous operation (e.g., rm, reboot) |
 | `!tars no` | Cancel and stop dangerous operation |
-| `!tars other <instruction>` | **Interrupt current task** and provide new instruction |
-| `!tars logs [lines]` | View plugin logs (latest N lines) |
-| `!tars result` | Get last auto task result |
-
-> 💡 **Tip**: `!tars other` can be used at any time during task execution to interrupt the current task and execute a new instruction.
-
-## Testing Commands
-
-These commands are available for testing and direct control:
-
-| Command | Description |
-|---------|-------------|
-| `!tars auto <task>` | Autonomous task planning (AI-powered) |
-| `!tars shell <command>` | Execute a shell command |
-| `!tars ps [filter]` | List running processes |
-| `!tars kill <pid\|name>` | Kill a process |
-| `!tars ls [path]` | List directory contents |
-| `!tars cat <path>` | Read file content |
-| `!tars open <app\|url>` | Open an application or URL |
-| `!tars close <app>` | Close an application |
-| `!tars apps [limit]` | List running applications |
-| `!tars info` | Show system information |
+| `!tars help` | Show help |
 
 ## Configuration
 
