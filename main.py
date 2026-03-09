@@ -193,7 +193,10 @@ class LangTARS(Command, BasePlugin):
         working_path = self._workspace_path
         if working_dir:
             wp = Path(working_dir).expanduser().resolve()
-            if str(wp).startswith(str(self._workspace_path.resolve())):
+            # Check if sandbox mode is disabled - allow any working directory
+            if not self.config.get('sandbox_mode', True):
+                working_path = wp
+            elif str(wp).startswith(str(self._workspace_path.resolve())):
                 working_path = wp
 
         try:
@@ -279,6 +282,15 @@ class LangTARS(Command, BasePlugin):
             return None
         try:
             requested = Path(path).expanduser()
+            
+            # Check if sandbox mode is disabled - allow global file access
+            if not self.config.get('sandbox_mode', True):
+                if requested.is_absolute():
+                    return requested.resolve()
+                # For relative paths, still use workspace as base
+                return (self._workspace_path / requested).resolve()
+            
+            # Sandbox mode enabled - restrict to workspace directory
             workspace_resolved = self._workspace_path.resolve()
             
             if requested.is_absolute():

@@ -25,16 +25,46 @@ DONE: Your summary here
 When the task is in progress but not yet complete, respond with text starting with:
 WORKING: Description of what you are currently doing
 
-When you need a skill/capability that doesn't exist in available tools, respond with:
+When you need a COMPLETELY NEW skill/capability that doesn't exist in ANY available tools, respond with:
 NEED_SKILL: Description of what capability you need
 
-## CRITICAL: After tool execution, you MUST respond with DONE
+## CRITICAL: Multi-Step Task Planning
 
-After most tools return {"success": true}, you MUST immediately return DONE: with a summary.
-- Opening an app? DONE: Opened [app name]
-- Navigated to a website? DONE: Opened [URL]
-- Executed a command? DONE: Command executed successfully
-- DO NOT keep calling the same tool repeatedly!
+For complex tasks that require multiple steps, you MUST first create a plan:
+
+1. When you receive a complex task, FIRST respond with a PLAN:
+PLAN:
+1. First step description
+2. Second step description
+3. Third step description
+...
+
+2. After outputting the plan, start executing step by step. Before each step, indicate which step you're working on:
+STEP 1: Description of what you're doing for step 1
+
+3. After completing each step, indicate completion:
+STEP_DONE 1: Brief result of step 1
+
+4. If a step fails:
+STEP_FAILED 1: Error description
+
+5. If you need to skip a step:
+STEP_SKIP 1: Reason for skipping
+
+6. CRITICAL: When you have a plan, you MUST complete ALL steps before returning DONE!
+   - After each STEP_DONE, continue to the next step
+   - Only return DONE: after ALL steps are completed
+   - Do NOT return DONE in the middle of a plan!
+
+## CRITICAL: After tool execution - PLAN vs SIMPLE TASK
+
+For SIMPLE tasks (single action):
+- After tool returns {"success": true}, return DONE: with a summary
+
+For MULTI-STEP tasks (when you have a PLAN):
+- After tool returns {"success": true}, return STEP_DONE N: with the result
+- Then continue to the next step with STEP N+1:
+- Only return DONE: after ALL steps are completed!
 
 EXCEPTION: After ask_user tool returns, you MUST continue executing the original task using the user's answer!
 - ask_user is for getting user input to continue the task, NOT for completing the task
@@ -68,8 +98,16 @@ EXCEPTION: After ask_user tool returns, you MUST continue executing the original
 15. CRITICAL - Non-Interactive Commands: All shell/powershell commands MUST be non-interactive. Use ask_user to collect information first
 16. CRITICAL - Error Handling: When a tool execution fails, analyze the error and use ask_user to request missing information. NEED_SKILL should ONLY be used when you need a completely new capability
 17. CRITICAL - ask_user Options: For open-ended questions, use an empty options array. For specific choices, provide meaningful options
+18. CRITICAL - Missing Information: When you need information like file paths, folder locations, repository paths, etc., use ask_user to ask the user. DO NOT use NEED_SKILL for missing information!
+19. CRITICAL - NEED_SKILL Usage: NEED_SKILL should ONLY be used when there is NO existing tool that can accomplish the task. If you just need more information to use an existing tool, use ask_user instead!
 
-If no tool can accomplish the user's request, then respond with NEED_SKILL: and describe what you need.
+## When to use ask_user vs NEED_SKILL:
+- User asks to find a file but you don't know the path → Use ask_user to ask for the path
+- User asks to open a repository but you don't know the location → Use ask_user to ask for the location
+- User asks for something that requires information you don't have → Use ask_user
+- User asks for a capability that NO existing tool can provide → Use NEED_SKILL
+
+If ABSOLUTELY NO tool can accomplish the user's request (not just missing information), then respond with NEED_SKILL: and describe what you need.
 """
 
     @classmethod
@@ -197,7 +235,10 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 1. 如果任务完成：DONE: 结果总结
 2. 如果需要继续工作：WORKING: 下一步计划
 3. 如果需要调用工具：使用原生 tool calling 机制
-4. 如果遇到错误无法继续：NEED_SKILL: 错误描述
+4. 如果需要用户提供信息（如路径、位置等）：使用 ask_user 工具询问用户
+5. 只有当完全没有工具可以完成任务时：NEED_SKILL: 需要的新能力描述
+
+注意：缺少信息（如文件路径、仓库位置）不是 NEED_SKILL，应该使用 ask_user 询问用户！
 
 你之前的回复是：{content_truncated}"""
 
@@ -213,7 +254,10 @@ If no tool can accomplish the user's request, then respond with NEED_SKILL: and 
 1. 如果任务完成：DONE: 结果总结
 2. 如果需要继续工作：WORKING: 下一步计划
 3. 如果需要调用工具：使用原生 tool calling 机制
-4. 如果遇到错误无法继续：NEED_SKILL: 错误描述"""
+4. 如果需要用户提供信息（如路径、位置等）：使用 ask_user 工具询问用户
+5. 只有当完全没有工具可以完成任务时：NEED_SKILL: 需要的新能力描述
+
+注意：缺少信息不是 NEED_SKILL，应该使用 ask_user 询问用户！"""
 
     @classmethod
     def get_continue_task_prompt(cls, working_msg: str) -> str:

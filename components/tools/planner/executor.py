@@ -102,9 +102,13 @@ class ReActExecutor:
         elif registry and self._skill_manager:
             self._skill_manager.set_registry(registry)
         
-        # Get rate limit from config
+        # Get config
         config = plugin.get_config() if plugin else {}
         rate_limit_seconds = float(config.get('planner_rate_limit_seconds', 1))
+        auto_cleanup = config.get('planner_auto_cleanup', True)
+        
+        # Set auto-cleanup preference in state manager
+        self._state_manager.set_auto_cleanup(auto_cleanup)
         
         # Get tools in OpenAI format for native tool calling
         tools_openai_format = []
@@ -128,11 +132,13 @@ class ReActExecutor:
         ]
         
         # ReAct loop
+        final_result = None
         for iteration in range(max_iterations):
             try:
                 # Check if stopped
                 if self._state_manager.is_stopped():
-                    return "Task has been stopped by user."
+                    final_result = "Task has been stopped by user."
+                    break
                 
                 # Rate limiting
                 await self._apply_rate_limit(rate_limit_seconds)
@@ -140,7 +146,8 @@ class ReActExecutor:
                 # Check if stopped after rate limit wait
                 if self._state_manager.is_stopped():
                     self._log_llm_call_end()
-                    return "Task has been stopped by user."
+                    final_result = "Task has been stopped by user."
+                    break
                 
                 # Increment call count
                 call_count = self._state_manager.increment_llm_call_count()
@@ -155,12 +162,14 @@ class ReActExecutor:
                     self._state_manager.stop_current_task()
                     SubprocessPlanner.clear_user_stop_file()
                     logger.info("Task cancelled via CancelledError")
-                    return "Task has been stopped by user."
+                    final_result = "Task has been stopped by user."
+                    break
                 
                 # Check if stopped after LLM call
                 if self._state_manager.is_stopped():
                     self._log_llm_call_end()
-                    return "Task has been stopped by user."
+                    final_result = "Task has been stopped by user."
+                    break
                 
                 # Process response
                 result = await self._process_response(
@@ -176,7 +185,8 @@ class ReActExecutor:
                 
                 if result is not None:
                     self._log_llm_call_end()
-                    return result
+                    final_result = result
+                    break
                 
             except Exception as e:
                 import traceback
@@ -185,13 +195,27 @@ class ReActExecutor:
                 logger.error(traceback.format_exc())
                 
                 if "429" in error_msg or "rate limit" in error_msg.lower():
-                    return self._build_rate_limit_error(error_msg)
+                    final_result = self._build_rate_limit_error(error_msg)
+                    break
                 
                 self._log_llm_call_end()
-                return f"Error during execution: {error_msg}"
+                final_result = f"Error during execution: {error_msg}"
+                break
         
-        self._log_llm_call_end()
-        return f"Task reached maximum iterations ({max_iterations}) without completion."
+        # If no result yet, we hit max iterations
+        if final_result is None:
+            self._log_llm_call_end()
+            final_result = f"Task reached maximum iterations ({max_iterations}) without completion."
+        
+        # Cleanup resources after task completion
+        try:
+            cleanup_msg = await self._cleanup_resources(helper_plugin or plugin)
+            if cleanup_msg:
+                final_result = final_result + cleanup_msg
+        except Exception as e:
+            logger.warning(f"Error during resource cleanup: {e}")
+        
+        return final_result
     
     async def _apply_rate_limit(self, rate_limit_seconds: float) -> None:
         """Apply rate limiting between LLM calls"""
@@ -559,6 +583,8 @@ class ReActExecutor:
                 logger.debug(f"Found tool '{tool_name}' in registry")
                 try:
                     result = await tool.execute(helper_plugin, arguments)
+                    # Track opened resources for cleanup
+                    self._track_resource_from_tool(tool_name, arguments, result)
                     return result
                 except Exception as e:
                     import traceback
@@ -568,9 +594,68 @@ class ReActExecutor:
         
         # Fallback to built-in tools
         try:
-            return await self._builtin_executor.execute(tool_name, arguments, helper_plugin)
+            result = await self._builtin_executor.execute(tool_name, arguments, helper_plugin)
+            # Track opened resources for cleanup
+            self._track_resource_from_tool(tool_name, arguments, result)
+            return result
         except Exception as e:
             return {"error": f"Unknown tool: {tool_name}, error: {str(e)}"}
+    
+    def _track_resource_from_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any]
+    ) -> None:
+        """
+        Track resources opened by tool execution for later cleanup.
+        
+        Args:
+            tool_name: Name of the executed tool
+            arguments: Tool arguments
+            result: Tool execution result
+        """
+        # Skip if result indicates error
+        if isinstance(result, dict) and result.get("error"):
+            return
+        
+        # Track based on tool type
+        if tool_name == "open_app":
+            app_name = arguments.get("app_name") or arguments.get("target", "")
+            if app_name and not app_name.startswith(("http://", "https://")):
+                self._state_manager.track_opened_resource(
+                    resource_type="app",
+                    name=app_name,
+                    metadata={"arguments": arguments}
+                )
+        
+        elif tool_name in ("browser_navigate", "browser_new_tab"):
+            url = arguments.get("url", "")
+            if url:
+                self._state_manager.track_opened_resource(
+                    resource_type="browser_tab",
+                    name=url,
+                    metadata={"arguments": arguments}
+                )
+        
+        elif tool_name in ("safari_open", "chrome_open", "edge_open"):
+            url = arguments.get("url", "")
+            browser_name = tool_name.replace("_open", "").title()
+            self._state_manager.track_opened_resource(
+                resource_type="browser",
+                name=browser_name,
+                metadata={"url": url, "arguments": arguments}
+            )
+        
+        elif tool_name == "close_app":
+            # Remove from tracking when app is closed
+            app_name = arguments.get("app_name", "")
+            if app_name:
+                self._state_manager.remove_tracked_resource("app", app_name)
+        
+        elif tool_name == "browser_close_tab":
+            # Note: We can't easily track which tab was closed without more context
+            pass
     
     async def _request_confirmation(
         self,
@@ -661,6 +746,86 @@ class ReActExecutor:
 可以稍后再试，或等待几秒钟后重试。
 
 错误详情: {error_msg[:200]}"""
+    
+    async def _cleanup_resources(self, helper_plugin) -> str:
+        """
+        Clean up resources opened during task execution.
+        
+        Args:
+            helper_plugin: Helper plugin for executing cleanup commands
+            
+        Returns:
+            Cleanup summary message
+        """
+        resources = self._state_manager.get_resources_for_cleanup()
+        if not resources:
+            return ""
+        
+        cleanup_results = []
+        logger.info(f"开始清理 {len(resources)} 个资源...")
+        
+        for resource in resources:
+            try:
+                if resource.resource_type == "app":
+                    # Close application
+                    result = await helper_plugin.close_app(
+                        app_name=resource.name,
+                        force=False
+                    )
+                    if result.get("success"):
+                        cleanup_results.append(f"✅ 已关闭应用: {resource.name}")
+                        logger.info(f"Closed app: {resource.name}")
+                    else:
+                        cleanup_results.append(f"⚠️ 关闭应用失败: {resource.name}")
+                        logger.warning(f"Failed to close app: {resource.name}")
+                
+                elif resource.resource_type == "browser":
+                    # Close browser
+                    browser_name = resource.name.lower()
+                    result = await helper_plugin.close_app(
+                        app_name=browser_name,
+                        force=False
+                    )
+                    if result.get("success"):
+                        cleanup_results.append(f"✅ 已关闭浏览器: {resource.name}")
+                        logger.info(f"Closed browser: {resource.name}")
+                    else:
+                        cleanup_results.append(f"⚠️ 关闭浏览器失败: {resource.name}")
+                        logger.warning(f"Failed to close browser: {resource.name}")
+                
+                elif resource.resource_type == "browser_tab":
+                    # Close browser completely using browser_cleanup
+                    try:
+                        result = await helper_plugin.browser_cleanup()
+                        if result.get("success"):
+                            cleanup_results.append(f"✅ 已关闭浏览器: {resource.name[:50]}...")
+                            logger.info(f"Closed browser via cleanup: {resource.name}")
+                        else:
+                            # Try close_tab as fallback
+                            try:
+                                result = await helper_plugin.browser_close_tab()
+                                if result.get("success"):
+                                    cleanup_results.append(f"✅ 已关闭浏览器标签页: {resource.name[:50]}...")
+                                    logger.info(f"Closed browser tab: {resource.name}")
+                                else:
+                                    cleanup_results.append(f"⚠️ 关闭浏览器失败: {resource.name[:50]}...")
+                                    logger.warning(f"Failed to close browser: {resource.name}")
+                            except Exception:
+                                cleanup_results.append(f"⚠️ 关闭浏览器失败: {resource.name[:50]}...")
+                    except Exception as browser_error:
+                        logger.warning(f"Error closing browser: {browser_error}")
+                        cleanup_results.append(f"⚠️ 关闭浏览器失败: {str(browser_error)[:50]}")
+                
+            except Exception as e:
+                logger.warning(f"Error cleaning up {resource.resource_type} {resource.name}: {e}")
+                cleanup_results.append(f"❌ 清理失败 [{resource.resource_type}] {resource.name}: {str(e)}")
+        
+        # Clear tracked resources after cleanup
+        self._state_manager.clear_tracked_resources()
+        
+        if cleanup_results:
+            return "\n\n🧹 资源清理:\n" + "\n".join(cleanup_results)
+        return ""
 
 
 class PlannerExecutor:
@@ -708,6 +873,10 @@ class PlannerExecutor:
         # Get config
         config = plugin.get_config() if plugin else {}
         rate_limit_seconds = float(config.get('planner_rate_limit_seconds', 1))
+        auto_cleanup = config.get('planner_auto_cleanup', True)
+        
+        # Set auto-cleanup preference in state manager
+        self._state_manager.set_auto_cleanup(auto_cleanup)
         
         # Get tools in OpenAI format for native tool calling
         tools_openai_format = []
@@ -790,8 +959,116 @@ class PlannerExecutor:
                         logger.warning(f"[{iteration+1}] 任务完成: {parsed.content[:100]}")
                         # Save conversation state for future continue
                         self._save_conversation_state(messages, task, registry, llm_model_uuid)
-                        yield parsed.content
+                        # Cleanup resources before returning
+                        cleanup_msg = await self._cleanup_resources(helper_plugin or plugin)
+                        if cleanup_msg:
+                            yield parsed.content + cleanup_msg
+                        else:
+                            yield parsed.content
                         return
+                    
+                    # Handle PLAN response - set up plan steps
+                    if parsed.type == ResponseType.PLAN:
+                        if parsed.plan_steps:
+                            self._state_manager.set_plan_steps(parsed.plan_steps)
+                            plan_display = self._state_manager.get_plan_display()
+                            logger.warning(f"[{iteration+1}] 生成计划:\n{plan_display}")
+                            # Send plan to user
+                            yield f"\n{plan_display}\n"
+                            # Update task status
+                            self._update_task_status(task, "计划已生成，开始执行...", "")
+                        invalid_response_count = 0
+                        messages.append(provider_message.Message(
+                            role="user",
+                            content="计划已收到。请开始执行第一步，使用 STEP 1: 开始。"
+                        ))
+                        continue
+                    
+                    # Handle STEP response - starting a step
+                    if parsed.type == ResponseType.STEP:
+                        step_index = parsed.step_index
+                        self._state_manager.start_step(step_index)
+                        plan_display = self._state_manager.get_plan_display()
+                        logger.warning(f"[{iteration+1}] 开始步骤 {step_index}: {parsed.content}")
+                        yield f"\n{plan_display}\n"
+                        self._update_task_status(task, f"执行步骤 {step_index}: {parsed.content}", "")
+                        invalid_response_count = 0
+                        messages.append(provider_message.Message(
+                            role="user",
+                            content=f"好的，请继续执行步骤 {step_index}。"
+                        ))
+                        continue
+                    
+                    # Handle STEP_DONE response - step completed
+                    if parsed.type == ResponseType.STEP_DONE:
+                        step_index = parsed.step_index
+                        self._state_manager.complete_step(step_index, parsed.content)
+                        plan_display = self._state_manager.get_plan_display()
+                        logger.warning(f"[{iteration+1}] 步骤 {step_index} 完成: {parsed.content}")
+                        yield f"\n{plan_display}\n"
+                        
+                        # Check if all steps are done
+                        if self._state_manager.is_plan_complete():
+                            self._save_conversation_state(messages, task, registry, llm_model_uuid)
+                            # Cleanup resources before returning
+                            cleanup_msg = await self._cleanup_resources(helper_plugin or plugin)
+                            yield f"\n✅ 所有步骤已完成！\n{plan_display}{cleanup_msg}"
+                            return
+                        
+                        # Get next step
+                        next_step = self._state_manager.get_next_pending_step()
+                        if next_step > 0:
+                            self._update_task_status(task, f"步骤 {step_index} 完成，准备执行步骤 {next_step}", "")
+                            messages.append(provider_message.Message(
+                                role="user",
+                                content=f"步骤 {step_index} 已完成。请继续执行步骤 {next_step}。"
+                            ))
+                        else:
+                            messages.append(provider_message.Message(
+                                role="user",
+                                content="所有步骤已完成，请返回 DONE: 总结任务结果。"
+                            ))
+                        invalid_response_count = 0
+                        continue
+                    
+                    # Handle STEP_FAILED response - step failed
+                    if parsed.type == ResponseType.STEP_FAILED:
+                        step_index = parsed.step_index
+                        self._state_manager.fail_step(step_index, parsed.content)
+                        plan_display = self._state_manager.get_plan_display()
+                        logger.warning(f"[{iteration+1}] 步骤 {step_index} 失败: {parsed.content}")
+                        yield f"\n{plan_display}\n"
+                        self._update_task_status(task, f"步骤 {step_index} 失败: {parsed.content}", "")
+                        invalid_response_count = 0
+                        messages.append(provider_message.Message(
+                            role="user",
+                            content=f"步骤 {step_index} 失败了。请决定是否继续执行其他步骤，或者返回 DONE: 说明失败原因。"
+                        ))
+                        continue
+                    
+                    # Handle STEP_SKIP response - step skipped
+                    if parsed.type == ResponseType.STEP_SKIP:
+                        step_index = parsed.step_index
+                        self._state_manager.skip_step(step_index, parsed.content)
+                        plan_display = self._state_manager.get_plan_display()
+                        logger.warning(f"[{iteration+1}] 步骤 {step_index} 跳过: {parsed.content}")
+                        yield f"\n{plan_display}\n"
+                        
+                        # Get next step
+                        next_step = self._state_manager.get_next_pending_step()
+                        if next_step > 0:
+                            self._update_task_status(task, f"步骤 {step_index} 跳过，准备执行步骤 {next_step}", "")
+                            messages.append(provider_message.Message(
+                                role="user",
+                                content=f"步骤 {step_index} 已跳过。请继续执行步骤 {next_step}。"
+                            ))
+                        else:
+                            messages.append(provider_message.Message(
+                                role="user",
+                                content="所有步骤已处理完毕，请返回 DONE: 总结任务结果。"
+                            ))
+                        invalid_response_count = 0
+                        continue
                     
                     if parsed.type == ResponseType.WORKING:
                         logger.warning(f"[{iteration+1}] 工作中: {parsed.content}")
@@ -887,7 +1164,9 @@ class PlannerExecutor:
         
         # Save conversation state even if max iterations reached
         self._save_conversation_state(messages, task, registry, llm_model_uuid)
-        yield f"Max iterations ({max_iterations}) reached. Task incomplete."
+        # Cleanup resources before returning
+        cleanup_msg = await self._cleanup_resources(helper_plugin or plugin)
+        yield f"Max iterations ({max_iterations}) reached. Task incomplete.{cleanup_msg}"
     
     async def _call_llm_with_stop_check(self, plugin, llm_model_uuid: str, messages: list, tools: list = None):
         """Call LLM with periodic stop check
@@ -954,11 +1233,146 @@ class PlannerExecutor:
             if registry:
                 tool = registry.get_tool(tool_name)
                 if tool:
-                    return await tool.execute(helper_plugin, arguments)
+                    result = await tool.execute(helper_plugin, arguments)
+                    # Track opened resources for cleanup
+                    self._track_resource_from_tool(tool_name, arguments, result)
+                    return result
         except Exception as e:
             return {"error": f"Tool execution failed: {str(e)}"}
         
         return {"error": f"Tool not found: {tool_name}"}
+    
+    def _track_resource_from_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any]
+    ) -> None:
+        """
+        Track resources opened by tool execution for later cleanup.
+        
+        Args:
+            tool_name: Name of the executed tool
+            arguments: Tool arguments
+            result: Tool execution result
+        """
+        # Skip if result indicates error
+        if isinstance(result, dict) and result.get("error"):
+            return
+        
+        # Track based on tool type
+        if tool_name == "open_app":
+            app_name = arguments.get("app_name") or arguments.get("target", "")
+            if app_name and not app_name.startswith(("http://", "https://")):
+                self._state_manager.track_opened_resource(
+                    resource_type="app",
+                    name=app_name,
+                    metadata={"arguments": arguments}
+                )
+        
+        elif tool_name in ("browser_navigate", "browser_new_tab"):
+            url = arguments.get("url", "")
+            if url:
+                self._state_manager.track_opened_resource(
+                    resource_type="browser_tab",
+                    name=url,
+                    metadata={"arguments": arguments}
+                )
+        
+        elif tool_name in ("safari_open", "chrome_open", "edge_open"):
+            url = arguments.get("url", "")
+            browser_name = tool_name.replace("_open", "").title()
+            self._state_manager.track_opened_resource(
+                resource_type="browser",
+                name=browser_name,
+                metadata={"url": url, "arguments": arguments}
+            )
+        
+        elif tool_name == "close_app":
+            # Remove from tracking when app is closed
+            app_name = arguments.get("app_name", "")
+            if app_name:
+                self._state_manager.remove_tracked_resource("app", app_name)
+    
+    async def _cleanup_resources(self, helper_plugin) -> str:
+        """
+        Clean up resources opened during task execution.
+        
+        Args:
+            helper_plugin: Helper plugin for executing cleanup commands
+            
+        Returns:
+            Cleanup summary message
+        """
+        resources = self._state_manager.get_resources_for_cleanup()
+        if not resources:
+            return ""
+        
+        cleanup_results = []
+        logger.info(f"开始清理 {len(resources)} 个资源...")
+        
+        for resource in resources:
+            try:
+                if resource.resource_type == "app":
+                    # Close application
+                    result = await helper_plugin.close_app(
+                        app_name=resource.name,
+                        force=False
+                    )
+                    if result.get("success"):
+                        cleanup_results.append(f"✅ 已关闭应用: {resource.name}")
+                        logger.info(f"Closed app: {resource.name}")
+                    else:
+                        cleanup_results.append(f"⚠️ 关闭应用失败: {resource.name}")
+                        logger.warning(f"Failed to close app: {resource.name}")
+                
+                elif resource.resource_type == "browser":
+                    # Close browser
+                    browser_name = resource.name.lower()
+                    result = await helper_plugin.close_app(
+                        app_name=browser_name,
+                        force=False
+                    )
+                    if result.get("success"):
+                        cleanup_results.append(f"✅ 已关闭浏览器: {resource.name}")
+                        logger.info(f"Closed browser: {resource.name}")
+                    else:
+                        cleanup_results.append(f"⚠️ 关闭浏览器失败: {resource.name}")
+                        logger.warning(f"Failed to close browser: {resource.name}")
+                
+                elif resource.resource_type == "browser_tab":
+                    # Close browser completely using browser_cleanup
+                    try:
+                        result = await helper_plugin.browser_cleanup()
+                        if result.get("success"):
+                            cleanup_results.append(f"✅ 已关闭浏览器: {resource.name[:50]}...")
+                            logger.info(f"Closed browser via cleanup: {resource.name}")
+                        else:
+                            # Try close_tab as fallback
+                            try:
+                                result = await helper_plugin.browser_close_tab()
+                                if result.get("success"):
+                                    cleanup_results.append(f"✅ 已关闭浏览器标签页: {resource.name[:50]}...")
+                                    logger.info(f"Closed browser tab: {resource.name}")
+                                else:
+                                    cleanup_results.append(f"⚠️ 关闭浏览器失败: {resource.name[:50]}...")
+                                    logger.warning(f"Failed to close browser: {resource.name}")
+                            except Exception:
+                                cleanup_results.append(f"⚠️ 关闭浏览器失败: {resource.name[:50]}...")
+                    except Exception as browser_error:
+                        logger.warning(f"Error closing browser: {browser_error}")
+                        cleanup_results.append(f"⚠️ 关闭浏览器失败: {str(browser_error)[:50]}")
+                
+            except Exception as e:
+                logger.warning(f"Error cleaning up {resource.resource_type} {resource.name}: {e}")
+                cleanup_results.append(f"❌ 清理失败 [{resource.resource_type}] {resource.name}: {str(e)}")
+        
+        # Clear tracked resources after cleanup
+        self._state_manager.clear_tracked_resources()
+        
+        if cleanup_results:
+            return "\n\n🧹 资源清理:\n" + "\n".join(cleanup_results)
+        return ""
     
     async def _request_confirmation(
         self,
@@ -1246,3 +1660,15 @@ class PlannerExecutor:
             logger.info(f"Saved conversation state with {len(messages)} messages")
         except Exception as e:
             logger.warning(f"Failed to save conversation state: {e}")
+    
+    def _update_task_status(self, task_description: str, step: str, tool: str) -> None:
+        """Update background task status"""
+        try:
+            from components.commands.langtars import BackgroundTaskManager
+            BackgroundTaskManager.set_task_status(
+                task_description=task_description,
+                step=step,
+                tool=tool
+            )
+        except Exception as e:
+            logger.debug(f"Failed to update task status: {e}")

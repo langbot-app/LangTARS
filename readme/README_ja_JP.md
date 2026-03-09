@@ -20,7 +20,7 @@
 
 ## LangTARS とは？
 
-LangTARS は**モダンAgent**の ReAct コンセプトに基づいて開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで **Mac、Windows PC、または Linux システム** を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
+LangTARS は **モダンAgent** の ReAct コンセプトに基づいて開発された **LangBot ネイティブプラグイン**で、LangBot ユーザーに **OpenClaw** のような体験を提供します。IM メッセージを通じて自律的な AI タスクプランニングで **Mac、Windows PC、または Linux システム** を制御できます。《インターステラー》の **タース(TARS)** のように忠実にサービスを提供します。
 
 [OpenClaw](https://github.com/openclaw/openclaw) と同様に、LangTARS は AI アシスタントがコンピュータで実際の操作を実行できますが、LangBot プラグインの洗練さと洗練さを備えています。
 
@@ -183,6 +183,7 @@ LangBot の設定で LangTARS を構成：
 | `allowed_users` | このコンピュータを制御できるユーザー ID | [] |
 | `command_whitelist` | 許可するシェルコマンド（空 = 制限付きで全て許可） | [] |
 | `workspace_path` | ファイル操作用のワークスペースディレクトリ | ~/.langtars |
+| `sandbox_mode` | サンドボックスモード、ファイル操作をワークスペース内に制限。無効にするとグローバルファイルアクセスが可能 | true |
 | `enable_shell` | シェルコマンド実行を有効化 | true |
 | `enable_process` | プロセス管理を有効化 | true |
 | `enable_file` | ファイル操作を有効化 | true |

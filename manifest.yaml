@@ -44,6 +44,16 @@ spec:
         en_US: 'Workspace directory for file operations (default: ~/.langtars)'
         zh_Hans: '文件操作的工作区目录（默认：~/.langtars）'
       default: ~/.langtars
+    - name: sandbox_mode
+      type: boolean
+      required: false
+      label:
+        en_US: Sandbox Mode
+        zh_Hans: 沙箱模式
+      description:
+        en_US: 'Restrict file operations to workspace directory only. When disabled, allows global file access (use with caution!)'
+        zh_Hans: '将文件操作限制在工作区目录内。关闭后允许全局文件访问（请谨慎使用！）'
+      default: true
     - name: enable_shell
       type: boolean
       required: false
@@ -204,6 +214,16 @@ spec:
         en_US: 'Path to skills directory (default: ~/.claude/skills)'
         zh_Hans: 'Skills 目录路径（默认：~/.claude/skills）'
       default: ~/.claude/skills
+    - name: planner_auto_cleanup
+      type: boolean
+      required: false
+      label:
+        en_US: Auto Cleanup Resources
+        zh_Hans: 自动清理资源
+      description:
+        en_US: 'Automatically close apps and browsers opened during task execution when task completes (default: true)'
+        zh_Hans: '任务完成后自动关闭执行过程中打开的应用和浏览器（默认：true）'
+      default: true
   components:
     Command:
       fromDirs:

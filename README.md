@@ -124,6 +124,7 @@ Configure LangTARS through LangBot's settings:
 | `allowed_users` | User IDs allowed to control this computer | [] |
 | `command_whitelist` | Allowed shell commands (empty = all with restrictions) | [] |
 | `workspace_path` | Working directory for file operations | ~/.langtars |
+| `sandbox_mode` | Restrict file operations to workspace only. When disabled, allows global file access | true |
 | `enable_shell` | Enable shell command execution | true |
 | `enable_process` | Enable process management | true |
 | `enable_file` | Enable file operations | true |

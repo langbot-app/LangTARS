@@ -108,12 +108,23 @@ class BackgroundTaskManager:
         if cls._task_start_time > 0.0:
             elapsed = time.time() - cls._task_start_time
         
+        # Get LLM call count from StateManager (the real source)
+        llm_call_count = cls._llm_call_count
+        try:
+            from components.tools.planner.state import get_state_manager
+            state_manager = get_state_manager()
+            real_count = state_manager.get_llm_call_count()
+            if real_count > 0:
+                llm_call_count = real_count
+        except Exception:
+            pass
+        
         return {
             "is_running": cls.is_running(),
             "task_description": cls._current_task_description,
             "current_step": cls._current_step,
             "current_tool": cls._current_tool,
-            "llm_call_count": cls._llm_call_count,
+            "llm_call_count": llm_call_count,
             "elapsed_seconds": round(elapsed, 1)
         }
 
@@ -560,6 +571,18 @@ class LanTARSCommand:
         
         msg_parts.append(f"📊 LLM调用: {status['llm_call_count']} 次")
         msg_parts.append(f"⏱️ 运行时间: {status['elapsed_seconds']} 秒")
+        
+        # Add plan display if available
+        try:
+            from components.tools.planner.state import get_state_manager
+            state_manager = get_state_manager()
+            if state_manager.has_plan():
+                plan_display = state_manager.get_plan_display()
+                if plan_display:
+                    msg_parts.append("")  # Empty line
+                    msg_parts.append(plan_display)
+        except Exception as e:
+            logger.debug(f"Failed to get plan display: {e}")
 
         yield CommandReturn(text="\n".join(msg_parts))
 

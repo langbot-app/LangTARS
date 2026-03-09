@@ -19,7 +19,7 @@
 
 ## 什麼是 LangTARS？
 
-LangTARS 是基於**現代Agent**的 ReAct 理念開發的 **LangBot 原生插件**，旨在為 LangBot 用戶帶來 **OpenClaw** 般的體驗。它使您能夠透過 IM 訊息使用自主 AI 任務規劃來控制您的 **Mac、Windows 電腦或 Linux 系統**。如同《星際穿越》中的 **塔斯(TARS)** 一樣，為您忠誠工作。
+LangTARS 是基於 **現代Agent** 的 ReAct 理念開發的 **LangBot 原生插件**，旨在為 LangBot 用戶帶來 **OpenClaw** 般的體驗。它使您能夠透過 IM 訊息使用自主 AI 任務規劃來控制您的 **Mac、Windows 電腦或 Linux 系統**。如同《星際穿越》中的 **塔斯(TARS)** 一樣，為您忠誠工作。
 
 與 [OpenClaw](https://github.com/openclaw/openclaw) 類似，LangTARS 允許 AI 助手在您的電腦上執行真實操作——但具有 LangBot 插件的簡潔與優雅。
 
@@ -147,6 +147,7 @@ AI 將：
 | `allowed_users` | 允許控制此電腦的使用者 ID | [] |
 | `command_whitelist` | 允許的 shell 命令（留空 = 在限制下允許所有） | [] |
 | `workspace_path` | 檔案操作的工作區目錄 | ~/.langtars |
+| `sandbox_mode` | 沙箱模式，限制檔案操作在工作區內。關閉後允許全域檔案存取 | true |
 | `enable_shell` | 啟用 shell 命令執行 | true |
 | `enable_process` | 啟用程序管理 | true |
 | `enable_file` | 啟用檔案操作 | true |

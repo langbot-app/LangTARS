@@ -20,6 +20,11 @@ class ResponseType(Enum):
     WORKING = "working"
     NEED_SKILL = "need_skill"
     TOOL_CALL = "tool_call"
+    PLAN = "plan"           # New: Plan generation
+    STEP = "step"           # New: Step start
+    STEP_DONE = "step_done" # New: Step completed
+    STEP_FAILED = "step_failed"  # New: Step failed
+    STEP_SKIP = "step_skip"      # New: Step skipped
     INVALID = "invalid"
 
 
@@ -29,6 +34,8 @@ class ParsedResponse:
     type: ResponseType
     content: str = ""
     tool_call: 'ToolCall | None' = None
+    plan_steps: list[str] | None = None  # For PLAN type
+    step_index: int = 0  # For STEP, STEP_DONE, STEP_FAILED, STEP_SKIP types
 
 
 @dataclass
@@ -77,6 +84,15 @@ class ResponseParser:
         content_stripped = content.strip()
         content_upper = content_stripped.upper()
         
+        # IMPORTANT: Check for tool calls FIRST (both JSON and XML format)
+        # This ensures tool calls are processed even when mixed with PLAN/STEP responses
+        tool_call = self.extract_tool_call(content)
+        if tool_call:
+            return ParsedResponse(
+                type=ResponseType.TOOL_CALL,
+                tool_call=tool_call
+            )
+        
         # Check for DONE response
         if content_upper.startswith("DONE:"):
             return ParsedResponse(
@@ -98,23 +114,102 @@ class ResponseParser:
                 content=content_stripped[11:].strip()
             )
         
-        # Try to parse as tool call
-        tool_call = self.extract_tool_call(content)
-        if tool_call:
+        # Check for PLAN response
+        if content_upper.startswith("PLAN:"):
+            plan_content = content_stripped[5:].strip()
+            steps = self._parse_plan_steps(plan_content)
             return ParsedResponse(
-                type=ResponseType.TOOL_CALL,
-                tool_call=tool_call
+                type=ResponseType.PLAN,
+                content=plan_content,
+                plan_steps=steps
             )
         
-        # Invalid response
+        # Check for STEP response (starting a step)
+        step_match = re.match(r'^STEP\s+(\d+):\s*(.*)$', content_stripped, re.IGNORECASE)
+        if step_match:
+            step_index = int(step_match.group(1))
+            step_content = step_match.group(2).strip()
+            return ParsedResponse(
+                type=ResponseType.STEP,
+                content=step_content,
+                step_index=step_index
+            )
+        
+        # Check for STEP_DONE response
+        step_done_match = re.match(r'^STEP_DONE\s+(\d+):\s*(.*)$', content_stripped, re.IGNORECASE)
+        if step_done_match:
+            step_index = int(step_done_match.group(1))
+            step_content = step_done_match.group(2).strip()
+            return ParsedResponse(
+                type=ResponseType.STEP_DONE,
+                content=step_content,
+                step_index=step_index
+            )
+        
+        # Check for STEP_FAILED response
+        step_failed_match = re.match(r'^STEP_FAILED\s+(\d+):\s*(.*)$', content_stripped, re.IGNORECASE)
+        if step_failed_match:
+            step_index = int(step_failed_match.group(1))
+            step_content = step_failed_match.group(2).strip()
+            return ParsedResponse(
+                type=ResponseType.STEP_FAILED,
+                content=step_content,
+                step_index=step_index
+            )
+        
+        # Check for STEP_SKIP response
+        step_skip_match = re.match(r'^STEP_SKIP\s+(\d+):\s*(.*)$', content_stripped, re.IGNORECASE)
+        if step_skip_match:
+            step_index = int(step_skip_match.group(1))
+            step_content = step_skip_match.group(2).strip()
+            return ParsedResponse(
+                type=ResponseType.STEP_SKIP,
+                content=step_content,
+                step_index=step_index
+            )
+        
+        # Invalid response (tool call check already done at the beginning)
         return ParsedResponse(
             type=ResponseType.INVALID,
             content=content_stripped
         )
     
+    def _parse_plan_steps(self, plan_content: str) -> list[str]:
+        """
+        Parse plan steps from plan content.
+        
+        Args:
+            plan_content: Content after "PLAN:"
+            
+        Returns:
+            List of step descriptions
+        """
+        steps = []
+        lines = plan_content.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Match numbered steps like "1. Step description" or "1) Step description"
+            match = re.match(r'^(\d+)[.\)]\s*(.+)$', line)
+            if match:
+                step_desc = match.group(2).strip()
+                if step_desc:
+                    steps.append(step_desc)
+            # Also match lines starting with "- " as steps
+            elif line.startswith('- '):
+                step_desc = line[2:].strip()
+                if step_desc:
+                    steps.append(step_desc)
+        
+        return steps
+    
     def extract_tool_call(self, content: str) -> ToolCall | None:
         """
         Extract tool call from LLM response content.
+        Supports both JSON format and XML format (<function_calls>).
         
         Args:
             content: Raw LLM response content
@@ -122,7 +217,12 @@ class ResponseParser:
         Returns:
             ToolCall if found, None otherwise
         """
-        # First, try to parse the entire content as JSON directly
+        # First, try to extract XML format tool call (<function_calls>)
+        xml_tool_call = self._extract_xml_tool_call(content)
+        if xml_tool_call:
+            return xml_tool_call
+        
+        # Then, try to parse the entire content as JSON directly
         try:
             data = json.loads(content)
             if isinstance(data, dict) and 'tool' in data and 'arguments' in data:
@@ -166,6 +266,186 @@ class ResponseParser:
                         return ToolCall.create(name=tool, arguments=arguments)
             except (json.JSONDecodeError, KeyError):
                 pass
+        
+        return None
+    
+    def _extract_xml_tool_call(self, content: str) -> ToolCall | None:
+        """
+        Extract tool call from XML format.
+        
+        Supports multiple formats:
+        
+        Format 1 (<function_calls>):
+        <function_calls>
+        <invoke name="tool_name">
+        <parameter name="param1">value1</parameter>
+        </invoke>
+        </function_calls>
+        
+        Format 2 (<tool_calling>):
+        <tool_calling>
+        <invoke>
+        <tool_name>tool_name</tool_name>
+        <parameters>
+        <param1>value1</param1>
+        </parameters>
+        </invoke>
+        </tool_calling>
+        
+        Format 3 (<tool_call> with JSON):
+        <tool_call>
+        {"name": "tool_name", "arguments": {...}}
+        </tool_call>
+        
+        Args:
+            content: Raw LLM response content
+            
+        Returns:
+            ToolCall if found, None otherwise
+        """
+        # Check if content contains any XML tool call format
+        has_function_calls = '<function_calls>' in content or '<invoke' in content
+        has_tool_calling = '<tool_calling>' in content or '<tool_name>' in content
+        has_tool_call = '<tool_call>' in content
+        
+        if not has_function_calls and not has_tool_calling and not has_tool_call:
+            return None
+        
+        # Try Format 3 first (<tool_call> with JSON inside)
+        if has_tool_call:
+            tool_call = self._extract_tool_call_json_format(content)
+            if tool_call:
+                return tool_call
+        
+        # Try Format 2 (<tool_calling> with <tool_name> and <parameters>)
+        if has_tool_calling:
+            tool_call = self._extract_tool_calling_format(content)
+            if tool_call:
+                return tool_call
+        
+        # Try Format 1 (<function_calls> with <invoke name="...">)
+        if has_function_calls:
+            tool_call = self._extract_function_calls_format(content)
+            if tool_call:
+                return tool_call
+        
+        return None
+    
+    def _extract_function_calls_format(self, content: str) -> ToolCall | None:
+        """
+        Extract tool call from <function_calls> format.
+        
+        Format:
+        <function_calls>
+        <invoke name="tool_name">
+        <parameter name="param1">value1</parameter>
+        </invoke>
+        </function_calls>
+        """
+        # Try to extract invoke block with name attribute
+        invoke_pattern = r'<invoke\s+name=["\']([^"\']+)["\']>(.*?)</invoke>'
+        invoke_match = re.search(invoke_pattern, content, re.DOTALL)
+        
+        if not invoke_match:
+            return None
+        
+        tool_name = invoke_match.group(1)
+        invoke_content = invoke_match.group(2)
+        
+        # Extract parameters
+        param_pattern = r'<parameter\s+name=["\']([^"\']+)["\']>([^<]*)</parameter>'
+        params = re.findall(param_pattern, invoke_content)
+        
+        arguments = {}
+        for param_name, param_value in params:
+            param_value = param_value.strip()
+            try:
+                arguments[param_name] = json.loads(param_value)
+            except (json.JSONDecodeError, ValueError):
+                arguments[param_name] = param_value
+        
+        logger.info(f"Extracted function_calls format: {tool_name} with args: {arguments}")
+        return ToolCall.create(name=tool_name, arguments=arguments)
+    
+    def _extract_tool_calling_format(self, content: str) -> ToolCall | None:
+        """
+        Extract tool call from <tool_calling> format.
+        
+        Format:
+        <tool_calling>
+        <invoke>
+        <tool_name>tool_name</tool_name>
+        <parameters>
+        <param1>value1</param1>
+        </parameters>
+        </invoke>
+        </tool_calling>
+        """
+        # Extract tool_name
+        tool_name_match = re.search(r'<tool_name>([^<]+)</tool_name>', content)
+        if not tool_name_match:
+            return None
+        
+        tool_name = tool_name_match.group(1).strip()
+        
+        # Extract parameters block
+        params_match = re.search(r'<parameters>(.*?)</parameters>', content, re.DOTALL)
+        if not params_match:
+            # No parameters, return tool call with empty arguments
+            logger.info(f"Extracted tool_calling format: {tool_name} with no args")
+            return ToolCall.create(name=tool_name, arguments={})
+        
+        params_content = params_match.group(1)
+        
+        # Extract individual parameters (format: <param_name>value</param_name>)
+        param_pattern = r'<([^/>]+)>([^<]*)</\1>'
+        params = re.findall(param_pattern, params_content)
+        
+        arguments = {}
+        for param_name, param_value in params:
+            param_name = param_name.strip()
+            param_value = param_value.strip()
+            try:
+                arguments[param_name] = json.loads(param_value)
+            except (json.JSONDecodeError, ValueError):
+                arguments[param_name] = param_value
+        
+        logger.info(f"Extracted tool_calling format: {tool_name} with args: {arguments}")
+        return ToolCall.create(name=tool_name, arguments=arguments)
+    
+    def _extract_tool_call_json_format(self, content: str) -> ToolCall | None:
+        """
+        Extract tool call from <tool_call> format with JSON inside.
+        
+        Format:
+        <tool_call>
+        {"name": "tool_name", "arguments": {...}}
+        </tool_call>
+        
+        Also supports:
+        <tool_call>
+        {"tool": "tool_name", "arguments": {...}}
+        </tool_call>
+        """
+        # Extract content between <tool_call> tags
+        tool_call_match = re.search(r'<tool_call>(.*?)</tool_call>', content, re.DOTALL)
+        if not tool_call_match:
+            return None
+        
+        json_content = tool_call_match.group(1).strip()
+        
+        try:
+            data = json.loads(json_content)
+            if isinstance(data, dict):
+                # Support both "name" and "tool" keys
+                tool_name = data.get('name') or data.get('tool')
+                arguments = data.get('arguments', {})
+                
+                if tool_name:
+                    logger.info(f"Extracted tool_call JSON format: {tool_name} with args: {arguments}")
+                    return ToolCall.create(name=tool_name, arguments=arguments)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSON in <tool_call>: {e}")
         
         return None
     
@@ -244,6 +524,67 @@ class ResponseParser:
         if content.strip().upper().startswith("NEED_SKILL:"):
             return True, content.strip()[11:].strip()
         return False, ""
+    
+    def is_plan_response(self, content: str) -> tuple[bool, list[str]]:
+        """
+        Check if content is a PLAN response.
+        
+        Returns:
+            Tuple of (is_plan, list of step descriptions)
+        """
+        if content.strip().upper().startswith("PLAN:"):
+            plan_content = content.strip()[5:].strip()
+            steps = self._parse_plan_steps(plan_content)
+            return True, steps
+        return False, []
+    
+    def is_step_response(self, content: str) -> tuple[bool, int, str]:
+        """
+        Check if content is a STEP response (starting a step).
+        
+        Returns:
+            Tuple of (is_step, step_index, step_description)
+        """
+        match = re.match(r'^STEP\s+(\d+):\s*(.*)$', content.strip(), re.IGNORECASE)
+        if match:
+            return True, int(match.group(1)), match.group(2).strip()
+        return False, 0, ""
+    
+    def is_step_done_response(self, content: str) -> tuple[bool, int, str]:
+        """
+        Check if content is a STEP_DONE response.
+        
+        Returns:
+            Tuple of (is_step_done, step_index, result)
+        """
+        match = re.match(r'^STEP_DONE\s+(\d+):\s*(.*)$', content.strip(), re.IGNORECASE)
+        if match:
+            return True, int(match.group(1)), match.group(2).strip()
+        return False, 0, ""
+    
+    def is_step_failed_response(self, content: str) -> tuple[bool, int, str]:
+        """
+        Check if content is a STEP_FAILED response.
+        
+        Returns:
+            Tuple of (is_step_failed, step_index, error)
+        """
+        match = re.match(r'^STEP_FAILED\s+(\d+):\s*(.*)$', content.strip(), re.IGNORECASE)
+        if match:
+            return True, int(match.group(1)), match.group(2).strip()
+        return False, 0, ""
+    
+    def is_step_skip_response(self, content: str) -> tuple[bool, int, str]:
+        """
+        Check if content is a STEP_SKIP response.
+        
+        Returns:
+            Tuple of (is_step_skip, step_index, reason)
+        """
+        match = re.match(r'^STEP_SKIP\s+(\d+):\s*(.*)$', content.strip(), re.IGNORECASE)
+        if match:
+            return True, int(match.group(1)), match.group(2).strip()
+        return False, 0, ""
     
     def parse_tool_arguments(self, arguments: Any) -> dict[str, Any]:
         """

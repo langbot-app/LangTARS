@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from .tool import PlannerTool
 from .executor import ReActExecutor, PlannerExecutor
-from .state import TaskState, StateManager
+from .state import TaskState, StateManager, PlanStep, PlanStepStatus, get_state_manager
 from .subprocess_executor import SubprocessPlanner, TrueSubprocessPlanner
 
 __all__ = [
@@ -14,6 +14,9 @@ __all__ = [
     "PlannerExecutor",
     "TaskState",
     "StateManager",
+    "PlanStep",
+    "PlanStepStatus",
+    "get_state_manager",
     "SubprocessPlanner",
     "TrueSubprocessPlanner",
 ]
