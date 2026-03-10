@@ -81,7 +81,11 @@ class ResponseParser:
         if not content or not content.strip():
             return ParsedResponse(type=ResponseType.INVALID)
         
-        content_stripped = content.strip()
+        # Strip <think>...</think> tags from LLM reasoning output
+        content_stripped = re.sub(r'<think>.*?</think>\s*', '', content.strip(), flags=re.DOTALL).strip()
+        if not content_stripped:
+            return ParsedResponse(type=ResponseType.INVALID)
+
         content_upper = content_stripped.upper()
         
         # IMPORTANT: Check for tool calls FIRST (both JSON and XML format)
