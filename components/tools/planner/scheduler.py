@@ -18,6 +18,10 @@ class TaskScheduler:
     """
     Singleton scheduler that runs a background asyncio loop.
     Checks for due tasks every POLL_INTERVAL seconds and executes them.
+
+    - reminder tasks: fire-and-forget (concurrent, no state conflict)
+    - execute tasks: serialized via _execute_lock because they share
+      the global StateManager singleton.
     """
 
     _instance: 'TaskScheduler | None' = None
@@ -31,6 +35,7 @@ class TaskScheduler:
         self._plugin: Any = None
         self._store: SchedulerStore | None = None
         self._executing_task_ids: set[str] = set()  # track in-flight tasks
+        self._execute_lock = asyncio.Lock()  # serialize execute-type tasks
 
     @classmethod
     def get_instance(cls) -> 'TaskScheduler':
@@ -66,7 +71,6 @@ class TaskScheduler:
 
     def _recover_overdue_tasks(self) -> None:
         """Check for tasks that were missed during downtime and recompute cron next_run."""
-        now = time.time()
         for task in self.store.get_active_tasks():
             if task.schedule_type == "cron" and task.cron_expr:
                 # Recompute next run time from now
@@ -110,9 +114,12 @@ class TaskScheduler:
         logger.info(f"执行定时任务: {task.task_id} ({task.task_type}: {task.description[:50]})")
         try:
             if task.task_type == "reminder":
+                # Reminders are stateless - can run concurrently
                 await self._send_reminder(task)
             elif task.task_type == "execute":
-                await self._execute_react_task(task)
+                # Execute tasks share the global StateManager - must serialize
+                async with self._execute_lock:
+                    await self._execute_react_task(task)
 
             # Update state after successful execution
             task.last_run_ts = time.time()
@@ -173,7 +180,11 @@ class TaskScheduler:
         logger.info(f"已发送提醒: {task.task_id}")
 
     async def _execute_react_task(self, task: ScheduledTask) -> None:
-        """Execute a task through the full ReAct loop, then send result."""
+        """Execute a task through the full ReAct loop, then send result.
+
+        IMPORTANT: This method MUST be called under self._execute_lock
+        because it resets and uses the shared global StateManager singleton.
+        """
         from components.commands.langtars import BackgroundTaskManager
         from .tool import PlannerTool
         from .state import get_state_manager
