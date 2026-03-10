@@ -75,7 +75,17 @@ class BrowserManager:
         try:
             from playwright.async_api import async_playwright
         except ImportError:
-            return {'success': False, 'error': 'playwright is not installed. Please run: pip install playwright && python -m playwright install'}
+            # Try to auto-install playwright pip package
+            import subprocess
+            import sys
+            try:
+                subprocess.run(
+                    [sys.executable, '-m', 'pip', 'install', 'playwright'],
+                    capture_output=True, text=True, timeout=120
+                )
+                from playwright.async_api import async_playwright
+            except Exception:
+                return {'success': False, 'error': 'playwright is not installed. Please run: pip install playwright && python -m playwright install'}
 
         try:
             self._playwright = await async_playwright().start()
