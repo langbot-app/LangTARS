@@ -43,7 +43,7 @@ LangTARS は異なるアプローチを取ります：
 | ステップ | 操作 |
 |:--------:|------|
 | 1 | パッケージマネージャーで LangBot をデプロイ：`uvx langbot@latest` |
-| 2 | [ドキュメント](https://docs.langbot.app/zh/usage/platforms/readme)に従ってボットを設定 |
+| 2 | [ドキュメント](https://langbot.app/docs/zh/usage/platforms/readme)に従ってボットを設定 |
 | 3 | プラグインマーケットプレイスから LangTARS プラグインをインストール |
 | 4 | LangTARS プラグイン設定ページで、モデルを選択し、その他の設定を行う |
 
