@@ -43,7 +43,7 @@ LangTARS 采用不同的方式：
 | 步骤 | 操作 |
 |:----:|------|
 | 1 | 使用包管理器部署 LangBot：`uvx langbot@latest` |
-| 2 | 按照[文档](https://docs.langbot.app/zh/usage/platforms/readme)配置机器人 |
+| 2 | 按照[文档](https://langbot.app/docs/zh/usage/platforms/readme)配置机器人 |
 | 3 | 在插件市场安装 LangTARS 插件 |
 | 4 | 在 LangTARS 插件设置页，选择自己的模型和进行其他设置 |
 
